@@ -98,36 +98,77 @@ def build_demo(rpms, rpm_ref, noise, seed):
 # =============================================================================
 #  NETWORKS  (multi-line __init__ -> no paste-corruption)
 # =============================================================================
+# ---- networks (every line explicit; 4-space indent; NO tabs) ----
 def mlp():
-    L=[nn.Linear(1,32),nn.Tanh()]+[nn.Linear(32,32),nn.Tanh()]*2+[nn.Linear(32,1)]
-    return nn.Sequential(*L)
- HNet(nn.Module):
-    def __init__(self): super().__init__(); self.net=mlp(); self.sp=nn.Softplus()
-    def forward(self,t,h0=1.0): return h0 - t*self.sp(self.net(t))
-class PsiPar(nn.Module):                       # constrained: A*exp(-d*tau), d>=0
+    layers = []
+    layers.append(nn.Linear(1, 32))
+    layers.append(nn.Tanh())
+    layers.append(nn.Linear(32, 32))
+    layers.append(nn.Tanh())
+    layers.append(nn.Linear(32, 32))
+    layers.append(nn.Tanh())
+    layers.append(nn.Linear(32, 1))
+    return nn.Sequential(*layers)
+
+
+class HNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = mlp()
+        self.sp = nn.Softplus()
+
+    def forward(self, t, h0=1.0):
+        return h0 - t * self.sp(self.net(t))
+
+
+class PsiPar(nn.Module):
     def __init__(self):
         super().__init__()
         self.logA = nn.Parameter(torch.tensor(0.0))
-        self.raw  = nn.Parameter(torch.tensor(0.5))
-        self.sp   = nn.Softplus()
+        self.raw = nn.Parameter(torch.tensor(0.5))
+        self.sp = nn.Softplus()
+
     def forward(self, t):
         return torch.exp(self.logA - self.sp(self.raw) * t)
+
     def ab(self):
-        return float(torch.exp(self.logA).item()), float(self.sp(self.raw).item())
+        a = float(torch.exp(self.logA).item())
+        d = float(self.sp(self.raw).item())
+        return a, d
+
+
 class ENet(nn.Module):
-    def __init__(self): super().__init__(); self.net=mlp(); self.sp=nn.Softplus()
-    def forward(self,t): return self.sp(self.net(t))
-class PsiFree(nn.Module):                      # UNCONSTRAINED (diagnostic only)
-    def __init__(self): super().__init__(); self.net=mlp()
-    def forward(self,t): return torch.exp(self.net(t))
+    def __init__(self):
+        super().__init__()
+        self.net = mlp()
+        self.sp = nn.Softplus()
+
+    def forward(self, t):
+        return self.sp(self.net(t))
+
+
+class PsiFree(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = mlp()
+
+    def forward(self, t):
+        return torch.exp(self.net(t))
+
 
 def resid(hn, psi, en, t, w):
-    t=t.reshape(-1,1); h=hn(t,1.0)
-    dh=torch.autograd.grad(h,t,grad_outputs=torch.ones_like(h),create_graph=True,retain_graph=True)[0]
-    return dh + (w**2)*psi(t)*h**3 + en(t)
+    t = t.reshape(-1, 1)
+    h = hn(t, 1.0)
+    ones = torch.ones_like(h)
+    dh = torch.autograd.grad(h, t, grad_outputs=ones, create_graph=True, retain_graph=True)[0]
+    return dh + (w ** 2) * psi(t) * h ** 3 + en(t)
+
+
 def coll(n):
-    t=torch.tensor(np.sort(np.random.uniform(0,1,n)),dtype=torch.float32).reshape(-1,1)
-    t.requires_grad_(True); return t
+    arr = np.sort(np.random.uniform(0, 1, n))
+    t = torch.tensor(arr, dtype=torch.float32).reshape(-1, 1)
+    t.requires_grad_(True)
+    return t
 
 # =============================================================================
 #  MODEL 1: constrained/parametric Psi PINN  (the honest "answer")
