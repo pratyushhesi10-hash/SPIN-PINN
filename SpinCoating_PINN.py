@@ -101,14 +101,19 @@ def build_demo(rpms, rpm_ref, noise, seed):
 def mlp():
     L=[nn.Linear(1,32),nn.Tanh()]+[nn.Linear(32,32),nn.Tanh()]*2+[nn.Linear(32,1)]
     return nn.Sequential(*L)
-class HNet(nn.Module):
+ HNet(nn.Module):
     def __init__(self): super().__init__(); self.net=mlp(); self.sp=nn.Softplus()
     def forward(self,t,h0=1.0): return h0 - t*self.sp(self.net(t))
 class PsiPar(nn.Module):                       # constrained: A*exp(-d*tau), d>=0
-    def __init__(self): super().__init__(); self.logA=nn.Parameter(torch.tensor(0.0))
-    self.raw=nn.Parameter(torch.tensor(0.5)); self.sp=nn.Softplus()
-    def forward(self,t): return torch.exp(self.logA - self.sp(self.raw)*t)
-    def ab(self): return float(torch.exp(self.logA).item()), float(self.sp(self.raw).item())
+    def __init__(self):
+        super().__init__()
+        self.logA = nn.Parameter(torch.tensor(0.0))
+        self.raw  = nn.Parameter(torch.tensor(0.5))
+        self.sp   = nn.Softplus()
+    def forward(self, t):
+        return torch.exp(self.logA - self.sp(self.raw) * t)
+    def ab(self):
+        return float(torch.exp(self.logA).item()), float(self.sp(self.raw).item())
 class ENet(nn.Module):
     def __init__(self): super().__init__(); self.net=mlp(); self.sp=nn.Softplus()
     def forward(self,t): return self.sp(self.net(t))
