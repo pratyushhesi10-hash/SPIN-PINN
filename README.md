@@ -1,6 +1,6 @@
-# SpinCoat PINN Lab
+SpinCoat PINN Lab
 
-This is an interactive tool for exploring a research question from spin-coating physics: if you only get to measure a thin film's thickness at a few sparse, noisy points in time, can you work backward and figure out how its viscosity and evaporation rate were changing throughout the process, even though you never measured those directly? The app lets you generate synthetic data where you know the real answer and see how well the model recovers it, or upload your own real thickness measurements and see what comes out. It's built on top of an undergraduate research project at NC State's ORaCEL lab studying inverse parameter recovery for organic semiconductor spin coating, and it's meant to make that project's findings tangible and explorable rather than just something you read about in a writeup.
+This is an interactive tool for exploring a research question from spin-coating physics: if you only get to measure a thin film's thickness at a few sparse, noisy points in time, can you work backward and figure out how its viscosity and evaporation rate were changing throughout the process, even though you never measured those directly? The app lets you generate synthetic data where you know the real answer and see how well the model recovers it, or upload your own real thickness measurements and see what comes out. It's built on top of a research project at NC State's ORaCEL lab studying inverse parameter recovery for organic semiconductor spin coating, and it's meant to make that project's findings tangible and explorable rather than just something you read about in a writeup.
 
 ## The physics behind it
 
