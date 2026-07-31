@@ -2,7 +2,7 @@ SpinCoat PINN Lab
 
 This is an interactive tool for exploring a research question from spin-coating physics: if you only get to measure a thin film's thickness at a few sparse, noisy points in time, can you work backward and figure out how its viscosity and evaporation rate were changing throughout the process, even though you never measured those directly? The app lets you generate synthetic data where you know the real answer and see how well the model recovers it, or upload your own real thickness measurements and see what comes out. It's built on top of a research project at NC State's ORaCEL lab studying inverse parameter recovery for organic semiconductor spin coating, and it's meant to make that project's findings tangible and explorable rather than just something you read about in a writeup.
 
-## The physics behind it
+The physics behind it
 
 When you spin-coat a polymer solution, two things are happening to the film at once. Centrifugal force is flinging liquid outward and thinning it, and the solvent is evaporating. Both effects are captured in a single differential equation:
 
@@ -14,13 +14,13 @@ Here `ĥ(τ)` is the film thickness (rescaled to be dimensionless), `Ψ(τ)` is 
 
 Only `ĥ` is something you can actually measure in a lab, typically via ellipsometry, and usually only at a handful of time points per run. `Ψ` and `Ẽ` are never measured directly — the whole point of this project is trying to recover them anyway.
 
-## How the app trains the model
+How the app trains the model
 
 The tool uses a Physics-Informed Neural Network, or PINN, which is really just a neural network that's penalized not only for missing your actual data, but also for disobeying the governing equation above. Concretely, three small networks get trained together: one per spin run that predicts thickness, plus one shared network for `Ψ(τ)` and one shared network for `Ẽ(τ)` that both spin runs draw from. Because neural networks are differentiable, the app can compute the network's own derivative `dĥ/dτ` automatically and check it against what the physics equation says it should be, everywhere, not just at your sparse measured points. That's what lets the model fill in the gaps between your handful of real data points with something that's still physically sensible.
 
 A few design choices are baked in for good reason. The thickness network is built so that its starting value is mathematically guaranteed to be correct, rather than something it merely tries to learn, since it's written as `ĥ(τ) = 1 - τ · softplus(NN(τ))`, which forces `ĥ(0) = 1` exactly no matter what the network's weights are. Viscosity and thickness are also forced to stay positive by construction, using functions like `softplus` and `exp`, since negative thickness or negative viscosity would be physically meaningless.
 
-## Walking through the tabs
+Walking through the tabs
 
 The app is organized so you'd naturally move through it left to right. The Physics tab is a live simulator where you can drag sliders for viscosity strength and decay, evaporation strength and decay, and the spin speeds of two runs, and immediately see what thickness curves and hidden `Ψ`/`Ẽ` functions those settings would produce. It's there to build intuition before you train anything.
 
@@ -48,7 +48,7 @@ If your thickness and time values aren't already in the app's rescaled dimension
 
 One thing worth knowing in advance: if all your runs share the same spin speed, you'll see a warning, because having only one spin speed means there's no way for the model to separate viscosity from evaporation, for reasons that are really the heart of what this whole project is about.
 
-## What the research actually found, and why it matters here
+What the research actually found, and why it matters here
 
 This is the part I'd encourage you to actually read before trusting any specific number the app gives you, because it's not a minor caveat — it's the central result of the research this tool is built on.
 
@@ -64,16 +64,16 @@ So, practically, what this app can reliably recover from typical sparse thicknes
 
 If you're using this app on your own data, the practical takeaways are to trust the combined ODE term panel more than the individual `Ψ` and `Ẽ` curves, to load runs with denser sampling early in the process if you care at all about the viscosity recovery specifically, since that's where nearly all the real information about it lives, and to treat a single-run dataset as informative for thickness and evaporation trends only, not for viscosity, since that separation simply isn't there to be found no matter how well the model trains.
 
-## A couple of implementation details worth knowing
+A couple of implementation details worth knowing
 
 The training loop sums the data loss and physics loss across however many runs are loaded rather than averaging them, which works fine as long as you're using the default two runs, but means the effective weighting between data and physics loss would shift if someone loaded three or more runs through the CSV tab, since the total loss magnitude scales with the number of runs. It's a quick fix if you want to make the tool robust to more runs, dividing both accumulated losses by the run count before combining them, but it's not something that affects the two-run results discussed above.
 
 A couple of physical assumptions are also baked in rather than derived: evaporation is assumed to behave the same regardless of spin speed, and the starting wet-film thickness is assumed independent of spin speed too, both of which are reasonable simplifications but worth knowing are assumptions rather than something the model proves. The underlying equation also assumes the fluid behaves in a simple, Newtonian way, which may not hold perfectly for real, more concentrated polymer solutions later in the drying process.
 
-## Getting it running
+Getting it running
 
 Go to the website:https://spin-pinn.streamlit.app/
 
-## Where this comes from
+Where this comes from
 
 The physics underlying this tool traces back to the classical spin-coating theory of Emslie, Bonner, and Peck (1958), and the PINN framework itself follows the approach introduced by Raissi, Perdikaris, and Karniadakis (2019). Everything specific to viscosity/evaporation recovery, the identifiability findings, and the app itself came out of ongoing undergraduate research at NC State's ORaCEL lab.
