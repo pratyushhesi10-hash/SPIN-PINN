@@ -11,6 +11,8 @@ from scipy.integrate import solve_ivp
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from style import load_css, chip
+load_css()   # call this right after st.set_page_config(...)
 
 # ─────────────────────────── Page & theme ───────────────────────────
 st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="", layout="wide")
