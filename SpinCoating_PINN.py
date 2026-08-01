@@ -1,462 +1,543 @@
-# app.py — SpinCoat PINN Lab  (+ Manual / CSV data tab)
-# Run:  streamlit run app.py
-import io, csv
+# app.py  —  Thin-Film Inverse Lab  (per-run normalization + normalization gate)
+# Run:  streamlit run app.py     Deps: streamlit numpy scipy torch matplotlib pandas
+import io, csv, math
 import numpy as np
 import pandas as pd
 import streamlit as st
-import torch
-import torch.nn as nn
-import torch.optim as optim
+import torch, torch.nn as nn, torch.optim as optim
 from scipy.integrate import solve_ivp
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from style import load_css, chip
-from style import load_css, chip, style_matplotlib
 
+st.set_page_config(page_title="Thin-Film Inverse Lab", page_icon="◈", layout="wide")
 
-load_css()
-style_matplotlib()   # add this line
+# ── crafted instrument theme (ambient layers + display/body/mono pairing) ──────
+st.markdown(r"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+:root{--ink:#e9edf2;--bg:#0c1117;--panel:rgba(255,255,255,.035);--line:rgba(233,237,242,.10);
+--c:#34d6cf;--a:#f0a93b;--r:#ff6b6b;--mute:#8a97a6;
+--disp:'Fraunces',serif;--body:'IBM Plex Sans',sans-serif;--mono:'JetBrains Mono',monospace;}
+html,body,[class*="css"]{font-family:var(--body);}
+[data-testid="stAppViewContainer"]{background:
+  radial-gradient(900px 520px at 92% -6%, rgba(52,214,207,.10), transparent 60%),
+  radial-gradient(820px 520px at -6% 106%, rgba(240,169,59,.07), transparent 60%),
+  var(--bg)!important;}
+[data-testid="stAppViewContainer"]::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:radial-gradient(rgba(233,237,242,.05) 1px,transparent 1px);background-size:26px 26px;}
+.grain{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.04;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.scan{position:fixed;left:0;right:0;height:1px;z-index:0;pointer-events:none;opacity:.35;
+  background:linear-gradient(90deg,transparent,var(--c),transparent);animation:scan 9s linear infinite;}
+@keyframes scan{0%{top:-2%}100%{top:102%}}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
+[data-testid="stMain"],[data-testid="stMainBlockContainer"]{background:transparent;}
+[data-testid="stSidebar"]{background:rgba(10,14,20,.82)!important;border-right:1px solid var(--line);}
+[data-testid="stSidebar"] *{color:var(--ink)!important;}
+[data-testid="stHeader"]{background:var(--bg)!important;}
+[data-testid="stToolbar"]{filter:invert(1) grayscale(1) brightness(1.7);}
+#MainMenu{visibility:hidden;} footer{visibility:hidden;}
+.block-container{padding-top:2rem;padding-bottom:2rem;max-width:1200px;}
+.stButton>button{background:var(--panel)!important;border:1px solid var(--line)!important;color:var(--ink)!important;}
+div[data-testid="stSlider"] [role="slider"]{background-color:var(--c)!important;border-color:var(--c)!important;}
+div[data-testid="stSlider"] *{color:var(--ink)!important;}
+div[data-baseweb="tab-highlight"]{background-color:var(--c)!important;}
+.kicker{font-family:var(--mono);font-size:.7rem;letter-spacing:.26em;text-transform:uppercase;color:var(--c);margin:0 0 18px;}
+.title{font-family:var(--disp);font-weight:600;font-optical-sizing:auto;line-height:.94;letter-spacing:-.02em;
+  font-size:clamp(2.6rem,6.2vw,5.2rem);margin:0;color:var(--ink);}
+.title em{font-style:italic;color:var(--a);}
+.lede{max-width:64ch;color:var(--mute);font-weight:300;font-size:1.05rem;margin:18px 0 0;line-height:1.6;}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;}
+.chip{font-family:var(--mono);font-size:.7rem;padding:6px 12px;border-radius:999px;border:1px solid var(--line);
+  color:var(--mute);background:var(--panel);transition:.2s;}
+.chip:hover{border-color:var(--c);color:var(--c);transform:translateY(-2px);}
+.chip-c{border-color:rgba(52,214,207,.4);color:var(--c);} .chip-a{border-color:rgba(240,169,59,.4);color:var(--a);}
+.strip{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:26px 0 4px;padding:12px 16px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel);font-family:var(--mono);font-size:.72rem;}
+.strip .k{color:var(--mute);letter-spacing:.12em;text-transform:uppercase;}
+.strip .v{color:var(--ink);} .strip .sep{color:var(--line);}
+.g-ok{color:var(--c);} .g-warn{color:var(--a);} .g-block{color:var(--r);}
+.sec{margin:6px 0 16px;animation:rise .55s both;}
+.sec-i{font-family:var(--mono);font-size:.68rem;letter-spacing:.2em;color:var(--a);text-transform:uppercase;}
+.sec-t{font-family:var(--disp);font-weight:600;font-size:clamp(1.4rem,3vw,2rem);color:var(--ink);line-height:1.05;margin:2px 0;}
+.sec-s{color:var(--mute);font-weight:300;max-width:70ch;}
+.blk{animation:rise .55s both;}
+.status{display:flex;gap:14px;align-items:flex-start;padding:14px 18px;border-radius:12px;border:1px solid var(--line);
+  border-left:4px solid var(--mute);background:var(--panel);margin:6px 0;}
+.status.ok{border-left-color:var(--c);} .status.warn{border-left-color:var(--a);} .status.block{border-left-color:var(--r);}
+.status .dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:none;background:var(--mute);animation:pulse 1.6s infinite;}
+.status.ok .dot{background:var(--c);} .status.warn .dot{background:var(--a);} .status.block .dot{background:var(--r);}
+.status .st-t{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;margin-bottom:6px;}
+.status.ok .st-t{color:var(--c);} .status.warn .st-t{color:var(--a);} .status.block .st-t{color:var(--r);}
+.status ul{margin:0;padding-left:16px;color:var(--ink);font-size:.86rem;line-height:1.5;}
+.status li{margin:2px 0;}
+.note{border-left:3px solid var(--c);background:rgba(52,214,207,.06);border-radius:0 10px 10px 0;padding:12px 16px;
+  color:var(--ink);font-size:.9rem;} .note b{color:var(--c);}
+[data-testid="stMetric"]{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012));
+  border:1px solid var(--line);border-left:3px solid var(--c);border-radius:14px;padding:14px 16px;transition:.22s;}
+[data-testid="stMetric"]:hover{transform:translateY(-3px);border-left-color:var(--a);box-shadow:0 16px 34px -22px #000;}
+[data-testid="stMetricValue"]{font-family:var(--disp)!important;font-weight:600;}
+[data-testid="stMetricLabel"]{font-family:var(--mono)!important;text-transform:uppercase;letter-spacing:.1em;font-size:.62rem!important;color:var(--mute)!important;}
+.stTabs [data-baseweb="tab"]{font-family:var(--body)!important;font-weight:600!important;}
+.stTabs [data-baseweb="tab"]:hover{color:var(--c)!important;}
+.stTabs [data-baseweb="tab-list"]{border-bottom:1px solid var(--line)!important;}
+.stButton>button{border-radius:12px!important;font-weight:600!important;transition:.18s!important;}
+.stButton>button:hover{transform:translateY(-2px);box-shadow:0 12px 26px -16px var(--c);}
+hr{border-color:var(--line)!important;}
+</style>
+<div class="grain"></div><div class="scan"></div>
+""", unsafe_allow_html=True)
 
-# ─────────────────────────── Page & theme ───────────────────────────
+st.markdown("""
+<div class="kicker">physics-informed inverse lab · thin-film drying</div>
+<h1 class="title">Read the film.<br><em>Infer</em> the physics.</h1>
+<p class="lede">A PINN recovers the hidden viscosity Ψ(τ) and evaporation Ẽ(τ) from sparse thickness
+data. Paste <b>raw dimensional</b> measurements — the lab auto‑normalizes each run with its own wet
+thickness, then a <b>normalization gate</b> checks h̃(0)≈1 and τ∈[0,1] and refuses to train with a
+plain‑English diagnosis if anything is off.</p>
+<div class="chips">
+  <span class="chip chip-c">dĥ/dτ = −w²Ψĥ³ − Ẽ</span>
+  <span class="chip">per-run h_wet · auto-detected</span>
+  <span class="chip chip-a">normalization gate</span>
+  <span class="chip">trust verdict</span>
+</div>
+""", unsafe_allow_html=True)
 
-st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🧪", layout="wide")
-load_css()
+# ── helpers ───────────────────────────────────────────────────────────────────
+def rel(p, t):
+    p = np.asarray(p, float).ravel(); t = np.asarray(t, float).ravel()
+    return float(np.mean(np.abs(p - t) / (np.abs(t) + 1e-8)) * 100)
 
-st.caption("PHYSICS-INFORMED NEURAL NETWORK · INVERSE DISCOVERY")
-st.markdown("## SpinCoat **:blue[PINN]** Lab")
-
-st.markdown(
-    chip("dh/dτ = −K(τ)·h³ − E(τ)")
-    + chip("2 spin runs · shared Ψ & E")
-    + chip("synthetic or your data", accent=True),
-    unsafe_allow_html=True,
-)
-
-# ─────────────────────────── Model (unchanged base) ───────────────────────────
-class ThicknessNet(nn.Module):
-    def __init__(self, h=32, L=3):
-        super().__init__()
-        L_ = [nn.Linear(1, h), nn.Tanh()]
-        for _ in range(L - 1): L_ += [nn.Linear(h, h), nn.Tanh()]
-        L_ += [nn.Linear(h, 1)]
-        self.net = nn.Sequential(*L_); self.sp = nn.Softplus()
-    def forward(self, tau, h0=1.0):
-        return h0 - tau * self.sp(self.net(tau))   # hard-enforces h(0)=h0
-
-class PsiNet(nn.Module):
-    def __init__(self, h=32, L=3):
-        super().__init__()
-        L_ = [nn.Linear(1, h), nn.Tanh()]
-        for _ in range(L - 1): L_ += [nn.Linear(h, h), nn.Tanh()]
-        L_ += [nn.Linear(h, 1)]
-        self.net = nn.Sequential(*L_)
-    def forward(self, tau): return torch.exp(self.net(tau))
-
-class ETildeNet(nn.Module):
-    def __init__(self, h=32, L=3):
-        super().__init__()
-        L_ = [nn.Linear(1, h), nn.Tanh()]
-        for _ in range(L - 1): L_ += [nn.Linear(h, h), nn.Tanh()]
-        L_ += [nn.Linear(h, 1)]
-        self.net = nn.Sequential(*L_); self.sp = nn.Softplus()
-    def forward(self, tau): return self.sp(self.net(tau))
-
-def residual(h_net, psi_net, e_net, tau, w_norm):
-    h = h_net(tau, h0=1.0)
-    dh = torch.autograd.grad(h, tau, torch.ones_like(h), create_graph=True, retain_graph=True)[0]
-    K = (w_norm ** 2) * psi_net(tau)
-    return dh + K * h**3 + e_net(tau), h, K
-
-# ─────────────────────────── Physics / data (unchanged base) ───────────────────────────
-def simulate(psi_A, psi_d, E_B, E_d, w, tau):
-    def rhs(t, h): return [-(w**2) * psi_A*np.exp(-psi_d*t) * h[0]**3 - E_B*np.exp(-E_d*t)]
-    return solve_ivp(rhs, (0, 1), [1.0], t_eval=tau, method="RK45").y[0]
-
-@st.cache_data
-def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed):
-    rng = np.random.default_rng(seed); torch.manual_seed(seed)
-    tau = np.linspace(0, 1, 500); w_ref = rpm_a
-    runs, K_true = [], []
-    for rpm in (rpm_a, rpm_b):
-        w = rpm / w_ref
-        h = simulate(psi_A, psi_d, E_B, E_d, w, tau)
-        K_true.append((w**2) * psi_A*np.exp(-psi_d*tau))
-        edges = np.linspace(0, 1, n_meas + 1)
-        tgt = np.array([rng.uniform(edges[i], edges[i+1]) for i in range(n_meas)])
-        idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tgt]))
-        h_s = h[idx]; meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
-        runs.append(dict(rpm=rpm, w=w, h=h, tau_s=tau[idx], h_meas=meas,
-                         tau_c=np.sort(rng.uniform(0, 1, n_colloc))))
-    return dict(tau=tau, runs=runs, K_true=K_true,
-                psi=psi_A*np.exp(-psi_d*tau), e=E_B*np.exp(-E_d*tau), has_truth=True)
-
-# ─────────────────────────── MANUAL / CSV helpers (ADDED) ───────────────────────────
-_MANUAL_EXAMPLE = ("run_id,t,h,rpm\n"
-                   "0,0,1.000,3000\n0,10,0.430,3000\n0,20,0.180,3000\n0,30,0.084,3000\n"
-                   "1,0,1.000,4500\n1,10,0.250,4500\n1,20,0.070,4500\n1,30,0.012,4500")
-
-def _parse_rows(text):
-    """Return list of (run_id, t, h, rpm|None, h_true|None). Header needs t & h."""
+def _group(tuples):
+    groups, order = {}, []
+    for rid, t, h, rpm in tuples:
+        if rid not in groups:
+            groups[rid] = dict(id=rid, t=[], h=[], rpm=rpm); order.append(rid)
+        elif rpm is not None:
+            groups[rid]['rpm'] = rpm
+        groups[rid]['t'].append(t); groups[rid]['h'].append(h)
     out = []
-    rd = csv.DictReader(io.StringIO(text))
-    if not rd.fieldnames:
-        return out
-    for raw in rd:
-        row = {k.strip().lower().lstrip("﻿"): (v.strip() if isinstance(v, str) else v)
-               for k, v in raw.items()}
-        try:
-            t = float(row["t"]); h = float(row["h"])
-        except (KeyError, ValueError, TypeError):
-            continue
-        rid_s = row.get("run_id", "")
-        rid = int(float(rid_s)) if rid_s not in ("", None) else 0
-        rpm_s = row.get("rpm", "")
-        rpm = float(rpm_s) if rpm_s not in ("", None) else None
-        ht_s = row.get("h_true", "")
-        ht = float(ht_s) if ht_s not in ("", None) else None
-        out.append((rid, t, h, rpm, ht))
+    for rid in order:
+        g = groups[rid]; idx = np.argsort(g['t'])
+        out.append(dict(id=rid, t=np.array(g['t'])[idx], h=np.array(g['h'])[idx], rpm=g['rpm']))
     return out
 
-def _build_manual(rows, h_wet, t_ref, default_rpm):
-    """Group parsed rows into the same dict-shape generate_data uses (no truth)."""
-    if h_wet <= 0 or t_ref <= 0:
-        return None
-    g = {}
-    for rid, t, h, rpm, ht in rows:
-        g.setdefault(rid, dict(t=[], h=[], rpm=rpm, ht=[]))
-        g[rid]["t"].append(t); g[rid]["h"].append(h)
-        if rpm is not None: g[rid]["rpm"] = rpm
-        if ht is not None: g[rid]["ht"].append(ht)
-    rps = [g[k]["rpm"] for k in g if g[k]["rpm"] is not None]
-    rpm_ref = float(min(rps)) if rps else float(default_rpm)
-    rng = np.random.default_rng(7)
+def parse_text(text):
+    tuples = []
+    try:
+        rd = csv.DictReader(io.StringIO(text))
+        for raw in rd:
+            d = {k.strip().lstrip("﻿"): (v.strip() if isinstance(v, str) else v) for k, v in raw.items()}
+            try: t = float(d['t']); h = float(d['h'])
+            except Exception: continue
+            rid = int(float(d.get('run_id', 0) or 0))
+            rv = d.get('rpm', ''); rpm = float(rv) if rv not in ('', None) else None
+            tuples.append((rid, t, h, rpm))
+    except Exception:
+        return []
+    return _group(tuples)
+
+def parse_df(df):
+    tuples = []
+    for _, row in df.iterrows():
+        try: t = float(row['t']); h = float(row['h'])
+        except Exception: continue
+        if math.isnan(t) or math.isnan(h): continue
+        rid = int(row['run_id']) if 'run_id' in df.columns and not (isinstance(row['run_id'], float) and math.isnan(row['run_id'])) else 0
+        rpm = row['rpm'] if 'rpm' in df.columns else None
+        if isinstance(rpm, float) and math.isnan(rpm): rpm = None
+        tuples.append((rid, t, h, rpm))
+    return _group(tuples)
+
+# pre-loaded example = the exact 1000/6000 case that broke global normalization
+EXAMPLE_ROWS = [
+    {'run_id':0,'t':0,'h':1200,'rpm':1000},{'run_id':0,'t':2,'h':792,'rpm':1000},
+    {'run_id':0,'t':4,'h':540,'rpm':1000},{'run_id':0,'t':7,'h':360,'rpm':1000},
+    {'run_id':0,'t':12,'h':216,'rpm':1000},{'run_id':0,'t':20,'h':132,'rpm':1000},
+    {'run_id':0,'t':30,'h':90,'rpm':1000},{'run_id':0,'t':40,'h':72,'rpm':1000},
+    {'run_id':1,'t':0,'h':850,'rpm':6000},{'run_id':1,'t':2,'h':425,'rpm':6000},
+    {'run_id':1,'t':4,'h':255,'rpm':6000},{'run_id':1,'t':7,'h':145,'rpm':6000},
+    {'run_id':1,'t':12,'h':77,'rpm':6000},{'run_id':1,'t':20,'h':43,'rpm':6000},
+    {'run_id':1,'t':30,'h':26,'rpm':6000},{'run_id':1,'t':40,'h':13,'rpm':6000}]
+EXAMPLE_DF = pd.DataFrame(EXAMPLE_ROWS)
+EXAMPLE = EXAMPLE_DF.to_csv(index=False)
+DEFAULT_RAW = _group([(r['run_id'], r['t'], r['h'], r['rpm']) for r in EXAMPLE_ROWS])
+
+def build_runs(raw_runs, auto_h, hw_manual, auto_t, tr):
+    rpm_vals = [r['rpm'] for r in raw_runs if r['rpm'] is not None]
+    rpm_ref = min(rpm_vals) if rpm_vals else 1.0
+    gmax = max(float(r['t'].max()) for r in raw_runs)
+    tr_use = gmax if auto_t else (tr if tr and tr > 0 else gmax)
     runs = []
-    for rid in sorted(g):
-        if len(g[rid]["t"]) < 2:
-            continue
-        o = np.argsort(g[rid]["t"])
-        t_raw = np.array(g[rid]["t"])[o]; h_raw = np.array(g[rid]["h"])[o]
-        ht_raw = np.array(g[rid]["ht"])[o] if g[rid]["ht"] else None
-        rpm = g[rid]["rpm"] if g[rid]["rpm"] is not None else float(default_rpm)
-        w = rpm / rpm_ref if rpm_ref > 0 else 1.0
-        runs.append(dict(
-            rpm=rpm, w=w,
-            tau_s=t_raw / float(t_ref),
-            h_meas=h_raw / float(h_wet),
-            tau_c=np.sort(rng.uniform(0, 1, 200)),
-            h=(ht_raw / float(h_wet)) if ht_raw is not None else None))
-    if not runs:
-        return None
-    return dict(tau=np.linspace(0, 1, 300), runs=runs, has_truth=False,
-                psi=None, e=None, K_true=None,
-                manual_meta=dict(h_wet=float(h_wet), t_ref=float(t_ref), rpm_ref=rpm_ref))
+    for r in raw_runs:
+        t, h = r['t'], r['h']; i0 = int(np.argmin(t))
+        raw_h0 = float(h[i0]); raw_tmax = float(t.max())
+        hw = raw_h0 if auto_h else float(hw_manual.get(r['id'], raw_h0))
+        if hw <= 0: hw = raw_h0 if raw_h0 > 0 else 1.0
+        w = (r['rpm'] / rpm_ref) if r['rpm'] is not None else 1.0
+        tau_s = t / tr_use; h_meas = h / hw
+        runs.append(dict(td=torch.tensor(tau_s, dtype=torch.float32).reshape(-1, 1),
+                         hd=torch.tensor(h_meas, dtype=torch.float32).reshape(-1, 1),
+                         tau_s=tau_s, h_meas=h_meas, w=float(w), rpm=r['rpm'],
+                         hw_used=float(hw), tr_used=float(tr_use), raw_h0=raw_h0,
+                         raw_tmax=raw_tmax, n_pts=len(tau_s), id=r['id']))
+    return runs, float(rpm_ref)
 
-# ─────────────────────────── Training / eval (base; .index -> enumerate) ───────────────────────────
-def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph):
-    torch.manual_seed(seed)
-    h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
-    psi, e = PsiNet(h, L), ETildeNet(h, L)
-    p = [p for n in h_nets for p in n.parameters()] + list(psi.parameters()) + list(e.parameters())
-    opt = optim.Adam(p, lr=lr); hist = dict(d=[], p=[], t=[])
-    for ep in range(epochs):
-        opt.zero_grad(); Ld = Lp = 0.0
-        for i, r in enumerate(data["runs"]):                       # enumerate (was .index(r))
-            td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
-            hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
-            Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd)**2)
-            tc = torch.tensor(r["tau_c"], dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
-            res, _, _ = residual(h_nets[i], psi, e, tc, r["w"])
-            Lp = Lp + torch.mean(res**2)
-        loss = w_d*Ld + w_p*Lp; loss.backward(); opt.step()
-        hist["d"].append(Ld.item()); hist["p"].append(Lp.item()); hist["t"].append(loss.item())
-        if ep % 20 == 0 or ep == epochs - 1:
-            prog.progress((ep+1)/epochs)
-            ph.caption(f"epoch {ep+1}/{epochs} · L_data {Ld.item():.5f} · L_phys {Lp.item():.5f}")
-    return dict(h_nets=h_nets, psi=psi, e=e), hist
+def gate(runs):
+    issues, warns, diag = [], [], []
+    for r in runs:
+        ts, hm, n = r['tau_s'], r['h_meas'], len(r['tau_s'])
+        if n < 2:
+            issues.append(f"Run {r['id']}: needs ≥2 points (has {n}).")
+            diag.append([r['id'], r['rpm'], round(r['hw_used'],1), round(r['tr_used'],1), '—', '—', '—', n]); continue
+        i0 = int(np.argmin(ts)); tmin, tmax, h0 = float(ts[i0]), float(ts.max()), float(hm[i0])
+        if tmin < -1e-6 or tmax > 1 + 1e-3:
+            issues.append(f"Run {r['id']}: τ∈[{tmin:.2f}, {tmax:.2f}] outside [0,1]. Set t_ref ≥ max time (≈{r['raw_tmax']:.0f}) or enable auto t_ref.")
+        if abs(h0 - 1.0) > 0.05:
+            issues.append(f"Run {r['id']}: h̃(earliest)={h0:.2f} ≠ 1. Set h_wet≈{r['raw_h0']:.0f} for this run, or enable auto h_wet.")
+        if (hm <= 0).any(): issues.append(f"Run {r['id']}: h̃≤0 somewhere (check h_wet).")
+        if (hm > 1.08).any(): warns.append(f"Run {r['id']}: some h̃>1.08 (h_wet should be the initial/max thickness).")
+        diag.append([r['id'], r['rpm'], round(r['hw_used'],1), round(r['tr_used'],1), round(tmin,3), round(tmax,3), round(h0,3), n])
+    ws = sorted({round(r['w'], 3) for r in runs})
+    if len(ws) < 2:
+        warns.append("All runs share one ω scaling → no multi-run lever; the Ψ/Ẽ split is structurally unidentifiable (expected teaching case, not an error).")
+    return issues, warns, diag
 
-def evaluate(nets, data):
-    with torch.no_grad():
-        t = torch.tensor(data["tau"], dtype=torch.float32).reshape(-1, 1)
-        psi, e = nets["psi"](t).numpy().flatten(), nets["e"](t).numpy().flatten()
-        hs = [n(t, 1.0).numpy().flatten() for n in nets["h_nets"]]
-    return dict(psi=psi, e=e, hs=hs, Ks=[(r["w"]**2)*psi for r in data["runs"]])
+def sec(i, t, s=""):
+    return f'<div class="sec"><div class="sec-i">{i}</div><div class="sec-t">{t}</div><div class="sec-s">{s}</div></div>'
 
-# ─────────────────────────── Plot helper (base) ───────────────────────────
-plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none",
-                     "axes.edgecolor": "#4fc3f7", "axes.labelcolor": "#e0e0e0",
-                     "text.color": "#e0e0e0", "axes.grid": True, "grid.color": "#2d3748",
-                     "axes.spines.top": False, "axes.spines.right": False,
-                     "font.family": "Calibri"})
-CY, AM = "#4fc3f7", "#ffb74d"
-def ax0(a): a.tick_params(colors="#b0bec5"); a.grid(alpha=.3); return a
+def status_card(level, title, lines):
+    body = "".join(f"<li>{x}</li>" for x in lines) if lines else "<li>Normalization looks good — h̃(0)≈1 and τ∈[0,1] for every run.</li>"
+    return f'<div class="status {level}"><span class="dot"></span><div><div class="st-t">{title}</div><ul>{body}</ul></div></div>'
 
-# ─────────────────────────── Sidebar ───────────────────────────
-st.sidebar.markdown("### Controls")
-source = st.sidebar.radio("Data source", ["Synthetic", "Manual / CSV"], index=0,
-                          help="Synthetic = the app generates the hidden truth. "
-                               "Manual / CSV = your own thickness-vs-time data.")
-SRC_SYN = (source == "Synthetic")
+# ── networks + training (constrained Ψ + free-Ψ diagnostic + multi-start) ─────
+def mlp(h, L):
+    lay = [nn.Linear(1, h), nn.Tanh()]
+    for _ in range(L - 1): lay += [nn.Linear(h, h), nn.Tanh()]
+    return nn.Sequential(*lay, nn.Linear(h, 1))
 
-with st.sidebar.expander("Physics", expanded=True):
-    psi_A = st.slider("Ψ_A · convective strength", 0.1, 3.0, 1.2, 0.05)
-    psi_d = st.slider("Ψ decay", 0.5, 6.0, 3.0, 0.1)
-    E_B   = st.slider("E_B · evaporation strength", 0.5, 6.0, 3.0, 0.1)
-    E_d   = st.slider("E decay", 0.5, 6.0, 3.5, 0.1)
-    rpm_a = st.slider("Run A · RPM", 1000, 6000, 3000, 100)
-    rpm_b = st.slider("Run B · RPM", 1000, 6000, 4500, 100)
-with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
-    n_meas  = st.slider("Measurements / run", 4, 24, 8)
-    noise   = st.slider("Noise σ", 0.0, 0.10, 0.02, 0.005)
-    n_colloc = st.slider("Collocation points", 50, 400, 200, 10)
-    seed = st.number_input("Seed", 0, 999, 42)
-with st.sidebar.expander("Training", expanded=True):
-    epochs = st.slider("Epochs", 200, 4000, 1500, 100)
-    lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3)
-    hid = st.slider("Hidden width", 16, 64, 32, 8)
-    lay = st.slider("Hidden layers", 2, 5, 3)
-    w_d = st.slider("W_data", 0.1, 5.0, 1.0, 0.1)
-    w_p = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1)
+class HNet(nn.Module):
+    def __init__(s, h=32, L=3): super().__init__(); s.net = mlp(h, L); s.sp = nn.Softplus()
+    def forward(s, t, h0=1.0): return h0 - t * s.sp(s.net(t))
+class PsiPar(nn.Module):                       # constrained A*exp(-d*tau), d>=0
+    def __init__(s):
+        super().__init__()
+        s.logA = nn.Parameter(torch.tensor(0.0))
+        s.raw = nn.Parameter(torch.tensor(0.5))
+        s.sp = nn.Softplus()
+    def forward(s, t): return torch.exp(s.logA - s.sp(s.raw) * t)
+    def ab(s): return float(torch.exp(s.logA).item()), float(s.sp(s.raw).item())
+class ENet(nn.Module):
+    def __init__(s, h=32, L=3): super().__init__(); s.net = mlp(h, L); s.sp = nn.Softplus()
+    def forward(s, t): return s.sp(s.net(t))
+class PsiFree(nn.Module):
+    def __init__(s, h=32, L=3): super().__init__(); s.net = mlp(h, L)
+    def forward(s, t): return torch.exp(s.net(t))
 
-st.sidebar.markdown("---")
-if SRC_SYN:
-    gen_btn = st.sidebar.button("Generate data", use_container_width=True, key="gen_btn")
+def resid(hn, psi, en, t, w):
+    t = t.reshape(-1, 1); h = hn(t, 1.0)
+    dh = torch.autograd.grad(h, t, grad_outputs=torch.ones_like(h), create_graph=True, retain_graph=True)[0]
+    return dh + (w ** 2) * psi(t) * h ** 3 + en(t)
+def coll(n):
+    t = torch.tensor(np.sort(np.random.uniform(0, 1, n)), dtype=torch.float32).reshape(-1, 1)
+    t.requires_grad_(True); return t
+
+def train_parametric(runs, ea, eb, ec, lr, wd, wp, width, layers, seed):
+    torch.manual_seed(seed); W = [r['w'] for r in runs]
+    td = [r['td'] for r in runs]; hd = [r['hd'] for r in runs]
+    hn = [HNet(width, layers) for _ in W]; psi = PsiPar(); en = ENet(width, layers)
+    oA = optim.Adam([p for h in hn for p in h.parameters()], lr=lr)
+    for _ in range(ea):
+        oA.zero_grad(); Ld = sum(torch.mean((hn[i](td[i], 1.0) - hd[i]) ** 2) for i in range(len(W)))
+        Ld.backward(); oA.step()
+    for h in hn:
+        for p in h.parameters(): p.requires_grad_(False)
+    oB = optim.Adam([{'params': psi.parameters(), 'lr': lr * 10}, {'params': en.parameters(), 'lr': lr}])
+    for _ in range(eb):
+        oB.zero_grad(); Lp = sum(torch.mean(resid(hn[i], psi, en, coll(150), W[i]) ** 2) for i in range(len(W)))
+        Lp.backward(); oB.step()
+    for h in hn:
+        for p in h.parameters(): p.requires_grad_(True)
+    oC = optim.Adam([{'params': [p for h in hn for p in h.parameters()], 'lr': lr * 0.1},
+                     {'params': psi.parameters(), 'lr': lr}, {'params': en.parameters(), 'lr': lr * 0.1}])
+    for _ in range(ec):
+        oC.zero_grad(); Ld = Lp = 0.0
+        for i in range(len(W)):
+            Ld = Ld + torch.mean((hn[i](td[i], 1.0) - hd[i]) ** 2)
+            Lp = Lp + torch.mean(resid(hn[i], psi, en, coll(150), W[i]) ** 2)
+        (wd * Ld + wp * Lp).backward(); oC.step()
+    return dict(hn=hn, psi=psi, en=en)
+
+def multistart(hn, runs, ns, ep, lr):
+    W = [r['w'] for r in runs]; out = []
+    for h in hn:
+        for p in h.parameters(): p.requires_grad_(False)
+    for s in range(ns):
+        torch.manual_seed(1000 + s); p2 = PsiPar(); e2 = ENet(32, 3)
+        with torch.no_grad():
+            p2.logA.copy_(torch.tensor(float(np.random.uniform(-1, 1))))
+            p2.raw.copy_(torch.tensor(float(np.random.uniform(-1, 2))))
+        o = optim.Adam([{'params': p2.parameters(), 'lr': lr * 10}, {'params': e2.parameters(), 'lr': lr}])
+        for _ in range(ep):
+            o.zero_grad(); Lp = sum(torch.mean(resid(hn[i], p2, e2, coll(150), W[i]) ** 2) for i in range(len(W)))
+            Lp.backward(); o.step()
+        out.append(p2.ab())
+    for h in hn:
+        for p in h.parameters(): p.requires_grad_(True)
+    return out
+
+def train_free(runs, ea, ep, lr, width, layers, seed):
+    torch.manual_seed(seed + 7); W = [r['w'] for r in runs]
+    td = [r['td'] for r in runs]; hd = [r['hd'] for r in runs]
+    hn = [HNet(width, layers) for _ in W]; psi = PsiFree(width, layers); en = ENet(width, layers)
+    oA = optim.Adam([p for h in hn for p in h.parameters()], lr=lr)
+    for _ in range(ea):
+        oA.zero_grad(); Ld = sum(torch.mean((hn[i](td[i], 1.0) - hd[i]) ** 2) for i in range(len(W)))
+        Ld.backward(); oA.step()
+    params = [p for h in hn for p in h.parameters()] + list(psi.parameters()) + list(en.parameters())
+    o = optim.Adam(params, lr=lr)
+    for _ in range(ep):
+        o.zero_grad(); Ld = Lp = 0.0
+        for i in range(len(W)):
+            Ld = Ld + torch.mean((hn[i](td[i], 1.0) - hd[i]) ** 2)
+            Lp = Lp + torch.mean(resid(hn[i], psi, en, coll(150), W[i]) ** 2)
+        (Ld + Lp).backward(); o.step()
+    return dict(hn=hn, psi=psi, en=en)
+
+def horizon_w(hn, w0, w1):
+    tau = np.linspace(0, 1, 300); tt = torch.tensor(tau, dtype=torch.float32).reshape(-1, 1)
+    with torch.no_grad(): h = [hn[0](tt, 1.0).numpy().ravel(), hn[1](tt, 1.0).numpy().ravel()]
+    c = np.abs((w0 ** 2) * h[0] ** 3 - (w1 ** 2) * h[1] ** 3)
+    tot = np.trapezoid(c, tau); e = tau < 0.2
+    frac = float(np.trapezoid(c[e], tau[e]) / tot) if tot > 0 else float('nan')
+    hz = float(tau[np.argmax(c < 0.1)]) if (c < 0.1).any() else 1.0
+    return dict(frac_early=frac, horizon=hz, c=c, tau=tau)
+
+def verdict(ms, hor):
+    A = np.array([a for a, _ in ms]); d = np.array([b for _, b in ms])
+    arel = np.std(A) / max(abs(np.median(A)), 1e-6); drel = np.std(d) / max(abs(np.median(d)), 1e-6)
+    v = {'h': 'HIGH — fit to data by construction', 'Ẽ': 'MEDIUM-HIGH — slope of h',
+         'combined': 'HIGH — what the physics loss pins',
+         'Ψ amplitude': 'MEDIUM (reproducible across restarts)' if arel < 0.3 else 'LOW (multi-start spread large)',
+         'Ψ decay': 'UNIDENTIFIABLE — a prior-driven extrapolation, not a measurement' if drel > 0.5 else 'LOW-MEDIUM (treat cautiously)'}
+    note = (f"Information horizon: {100*hor['frac_early']:.0f}% of the 2-run Ψ leverage sits in τ<0.2."
+            if hor else "Single run → no multi-run lever on Ψ.")
+    return v, arel, drel, note
+
+def demo_build(PA, PD, EB, ED, rpm_a, rpm_b, n_meas, noise, seed):
+    np.random.seed(seed); torch.manual_seed(seed)
+    W = [rpm_a / rpm_a, rpm_b / rpm_a]; rpms = [rpm_a, rpm_b]
+    Pt = lambda t: PA * np.exp(-PD * t); Et = lambda t: EB * np.exp(-ED * t)
+    te = np.linspace(0, 1, 500); runs = []; edges = np.linspace(0, 1, n_meas + 1)
+    for i, w in enumerate(W):
+        s = solve_ivp(lambda t, h, w=w: [-(w ** 2) * Pt(t) * h[0] ** 3 - Et(t)], (0, 1), [1.0], t_eval=te, method='RK45')
+        tg = np.array([np.random.uniform(edges[k], edges[k + 1]) for k in range(n_meas)])
+        idx = np.sort(np.unique([np.argmin(np.abs(te - t)) for t in tg])); idx[-1] = len(te) - 1
+        ht = s.y[0][idx]; hm = np.clip(ht + noise * ht * np.random.normal(0, 1, len(idx)), 1e-4, None)
+        runs.append(dict(td=torch.tensor(te[idx], dtype=torch.float32).reshape(-1, 1),
+                         hd=torch.tensor(hm, dtype=torch.float32).reshape(-1, 1),
+                         tau_s=te[idx], h_meas=hm, w=float(w), rpm=rpms[i], h=s.y[0], Pt=Pt(te), Et=Et(te),
+                         hw_used=1.0, tr_used=1.0, raw_h0=1.0, raw_tmax=1.0, n_pts=len(idx), id=i))
+    return runs
+
+def ax0(a): a.tick_params(colors="#8a97a6"); a.grid(alpha=.22); return a
+plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none", "axes.edgecolor": "#2a3340",
+    "axes.labelcolor": "#c4cedd", "text.color": "#c4cedd", "xtick.color": "#8a97a6", "ytick.color": "#8a97a6",
+    "axes.grid": True, "grid.color": "#1a212c", "axes.spines.top": False, "axes.spines.right": False})
+
+# ── sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown('<div class="kicker" style="margin-top:6px">controls</div>', unsafe_allow_html=True)
+    source = st.radio("Data source", ["Synthetic", "Manual"], index=0,
+                      help="Synthetic = built-in truth. Manual = your raw thickness data.")
+    with st.expander("Synthetic ground truth & simulator", expanded=(source == "Synthetic")):
+        PA = st.slider("Ψ_A", 0.1, 3.0, 1.2, 0.05); PD = st.slider("Ψ decay", 0.5, 6.0, 3.0, 0.1)
+        EB = st.slider("Ẽ_B", 0.5, 6.0, 3.0, 0.1); ED = st.slider("Ẽ decay", 0.5, 6.0, 3.5, 0.1)
+        rpm_a = st.slider("Run A · RPM", 1000, 6000, 3000, 100); rpm_b = st.slider("Run B · RPM", 1000, 6000, 4500, 100)
+        n_meas = st.slider("Measurements / run", 4, 24, 8); noise = st.slider("Noise σ", 0.0, 0.10, 0.02, 0.005)
+        seed = st.number_input("Seed", 0, 999, 42)
+    with st.expander("Training", expanded=False):
+        ea = st.slider("Phase A epochs", 100, 1500, 400, 50); eb = st.slider("Phase B epochs", 100, 1500, 500, 50)
+        ec = st.slider("Phase C epochs", 100, 1500, 400, 50); ef = st.slider("Free-Ψ epochs", 200, 2000, 900, 100)
+        lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3)
+        width = st.slider("Hidden width", 16, 64, 32, 8); layers = st.slider("Hidden layers", 2, 5, 3)
+        wd = st.slider("W_data", 0.1, 5.0, 1.0, 0.1); wp = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1)
+        ns = st.slider("Multi-start restarts", 2, 10, 4)
+
+# ── resolve runs + gate (before tabs, so every tab + the strip agree) ─────────
+if source == "Synthetic":
+    runs = demo_build(PA, PD, EB, ED, rpm_a, rpm_b, n_meas, noise, seed); has_truth = True
 else:
-    st.sidebar.caption("Load your thickness data in the **Manual / CSV** tab, then Train.")
-    gen_btn = False
-train_btn = st.sidebar.button("Train PINN", use_container_width=True, key="train_btn")
+    raw_runs = st.session_state.get('raw_runs', DEFAULT_RAW)
+    auto_h = st.session_state.get('auto_h', True); auto_t = st.session_state.get('auto_t', True)
+    gmax = max(float(r['t'].max()) for r in raw_runs)
+    hw_manual = {}
+    for r in raw_runs:
+        rh0 = float(r['h'][int(np.argmin(r['t']))])
+        hw_manual[r['id']] = rh0 if auto_h else float(st.session_state.get(f'hw_{r["id"]}', rh0))
+    tr = gmax if auto_t else float(st.session_state.get('tr_manual', gmax))
+    runs, rpm_ref = build_runs(raw_runs, auto_h, hw_manual, auto_t, tr); has_truth = False
+issues, warns, diag = gate(runs)
+level = 'block' if issues else ('warn' if warns else 'ok')
+level_txt = {'ok': 'READY', 'warn': 'READY · NOTES', 'block': 'BLOCKED'}[level]
+ws = sorted({round(r['w'], 2) for r in runs})
 
-for k in ("data", "nets", "hist"):
-    st.session_state.setdefault(k, None)
-if gen_btn:
-    st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed)
-    st.session_state.nets = st.session_state.hist = None
+st.markdown(f"""
+<div class="strip blk">
+  <span class="k">source</span><span class="v">{source}</span><span class="sep">·</span>
+  <span class="k">runs</span><span class="v">{len(runs)}</span><span class="sep">·</span>
+  <span class="k">ω-scaling</span><span class="v">{ws}</span><span class="sep">·</span>
+  <span class="k">normalization</span><span class="g-{level}">{level_txt}</span>
+</div>""", unsafe_allow_html=True)
 
-# ─────────────────────────── Tabs ───────────────────────────
-tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV", "Model"])
+# ── tabs ──────────────────────────────────────────────────────────────────────
+t_phys, t_data, t_train, t_res, t_man, t_mod = st.tabs(
+    ["◐ Physics", "📡 Data", "🧠 Train", "📊 Results", "✎ Manual input", "◈ About"])
 
-# ---------- 0 · PHYSICS ----------
-with tb[0]:
-    st.markdown("#### Live thinning simulator")
-    if not SRC_SYN:
-        st.caption("This simulator draws the *synthetic* physics from the sliders, for intuition. "
-                   "Your loaded data drives the Data / Train / Results tabs.")
-    tau = np.linspace(0, 1, 500); w_ref = rpm_a
-    c1, c2 = st.columns(2)
+with t_phys:
+    st.markdown(sec("01", "Forward simulator", "Integrate the ground-truth ODE at the sidebar spin speeds — intuition for what the PINN must invert."), unsafe_allow_html=True)
+    te = np.linspace(0, 1, 500); c1, c2 = st.columns(2)
     with c1:
         f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-        for rpm, c in ((rpm_a, CY), (rpm_b, AM)):
-            a.plot(tau, simulate(psi_A, psi_d, E_B, E_d, rpm/w_ref, tau), color=c, lw=2.4, label=f"{rpm} RPM")
-        a.set_xlabel("τ"); a.set_ylabel("h(τ)"); a.set_title("Film thinning h(τ)")
-        a.legend(frameon=False); ax0(a); st.pyplot(f)
+        for w, col in zip([rpm_a / rpm_a, rpm_b / rpm_a], ["#34d6cf", "#f0a93b"]):
+            s = solve_ivp(lambda t, h, w=w: [-(w ** 2) * PA * np.exp(-PD * t) * h[0] ** 3 - EB * np.exp(-ED * t)], (0, 1), [1.0], t_eval=te, method='RK45')
+            a.plot(te, s.y[0], color=col, lw=2.4, label=f"{int(w*rpm_a)} RPM")
+        a.set_xlabel("τ"); a.set_ylabel("ĥ"); a.set_title("Thinning curves"); a.legend(frameon=False); ax0(a); st.pyplot(f)
     with c2:
         f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-        a.plot(tau, psi_A*np.exp(-psi_d*tau), color=CY, lw=2.4, label="Ψ(τ)")
-        a.plot(tau, E_B*np.exp(-E_d*tau), color=AM, lw=2.4, label="E(τ)")
-        a.set_xlabel("τ"); a.set_title("Latent Ψ(τ) & evaporation E(τ)")
-        a.legend(frameon=False); ax0(a); st.pyplot(f)
-    st.caption("K(τ) = (ω/ω_ref)²·Ψ(τ) — higher spin → stronger convective thinning.")
+        a.plot(te, PA * np.exp(-PD * te), color="#34d6cf", lw=2.4, label="Ψ(τ)")
+        a.plot(te, EB * np.exp(-ED * te), color="#f0a93b", lw=2.4, label="Ẽ(τ)")
+        a.set_xlabel("τ"); a.set_title("Hidden physics"); a.legend(frameon=False); ax0(a); st.pyplot(f)
 
-# ---------- 1 · DATA (base; handles manual with no true curve) ----------
-with tb[1]:
-    st.markdown("#### " + ("Synthetic sparse measurements" if SRC_SYN else "Loaded measurements"))
-    if st.session_state.data:
-        d = st.session_state.data
-        truth = bool(d.get("has_truth", False))
-        n = len(d["runs"])
-        c1, c2 = st.columns(2)
-        for i in range(min(n, 2)):
-            with (c1 if i == 0 else c2):
-                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-                run = d["runs"][i]
-                if truth and run.get("h") is not None:
-                    a.plot(d["tau"], run["h"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label="true h(τ)")
-                elif run.get("h") is not None:
-                    a.plot(run["tau_s"], run["h"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label="true h @data")
-                a.scatter(run["tau_s"], run["h_meas"], color=[CY, AM][i % 2], s=46, zorder=5, label="data")
-                a.scatter(run["tau_c"], np.zeros_like(run["tau_c"]),
-                          marker="|", color="#64748b", s=60, label="collocation")
-                a.set_xlabel("τ"); a.set_ylabel("h"); a.set_title(f"Run {i} · {run.get('rpm', '?')} RPM")
-                a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
-        if n > 2:
-            st.caption(f"(showing first 2 of {n} runs)")
-        if SRC_SYN:
-            st.caption(f"{n_meas} stratified samples/run · σ={noise} · {n_colloc} collocation points · seed {seed}")
-        else:
-            m = d.get("manual_meta", {})
-            st.caption(f"manual · {n} run(s) · h_wet={m.get('h_wet')} · t_ref={m.get('t_ref')} · rpm_ref={m.get('rpm_ref')}")
+with t_data:
+    st.markdown(sec("02", "What the PINN sees", "Normalized sparse thickness per run (dots) plus unlabeled collocation ticks where the ODE is enforced."), unsafe_allow_html=True)
+    cols = st.columns(min(len(runs), 2))
+    for i in range(min(len(runs), 2)):
+        with cols[i]:
+            f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+            if has_truth: a.plot(runs[i].get('h') if runs[i].get('h') is not None else runs[i]['tau_s'], runs[i].get('h') if runs[i].get('h') is not None else runs[i]['h_meas'], color=["#34d6cf", "#f0a93b"][i], lw=2.2, alpha=.5, label="true ĥ")
+            a.scatter(runs[i]['tau_s'], runs[i]['h_meas'], color=["#34d6cf", "#f0a93b"][i], s=46, zorder=5, label="data")
+            a.scatter(np.sort(np.random.RandomState(i).uniform(0, 1, 200)), np.zeros(200), marker="|", color="#5a6675", s=50, label="collocation")
+            a.set_xlabel("τ"); a.set_ylabel("ĥ"); a.set_title(f"Run {runs[i]['id']} · w={runs[i]['w']:.2f}"); a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
+    if not has_truth:
+        st.caption(f"Normalization used — h_wet per run: " + ", ".join(f"run {r['id']}={r['hw_used']:.0f}" for r in runs) + f" · t_ref={runs[0]['tr_used']:.1f}.")
+
+with t_train:
+    st.markdown(sec("03", "Train the inverse model", "Constrained Ψ(τ)=A·exp(−d·τ) + shared Ẽ, then a free‑Ψ run as the unidentifiability diagnostic."), unsafe_allow_html=True)
+    st.markdown(status_card(level, "Normalization gate — " + level_txt,
+                            ([f"⛔ {x}" for x in issues] + [f"⚠ {x}" for x in warns]) or None), unsafe_allow_html=True)
+    disabled = (level == 'block')
+    if disabled: st.error("Training is blocked until the normalization issues above are resolved.")
+    if st.button("🧠  Train inverse model", use_container_width=True, disabled=disabled):
+        with st.spinner("Training constrained model, multi-start, and free‑Ψ diagnostic…"):
+            param = train_parametric(runs, ea, eb, ec, lr, wd, wp, width, layers, seed)
+            ms = multistart(param['hn'], runs, ns, 250, lr)
+            free = train_free(runs, 300, ef, lr, width, layers, seed)
+        st.session_state['train_res'] = dict(param=param, ms=ms, free=free)
+        st.success("Training complete — see Results.")
+
+with t_res:
+    st.markdown(sec("04", "Inverse recovery", "Headline Ψ/Ẽ/h, the combined ODE term (the identifiable part), the information horizon, and a trust verdict."), unsafe_allow_html=True)
+    tr = st.session_state.get('train_res')
+    if tr is None:
+        st.info("Press **Train** first.")
     else:
-        st.info("Hit **Generate data** (synthetic) or load data in the **Manual / CSV** tab.")
-
-# ---------- 2 · TRAIN (base; safe guard instead of silent synthetic) ----------
-with tb[2]:
-    st.markdown("#### Training")
-    if train_btn:
-        if st.session_state.data is None:
-            st.warning("No data loaded yet. Use **Generate data** (synthetic) or load CSV / manual "
-                       "data in the **Manual / CSV** tab first.")
-            st.stop()
-        prog = st.progress(0); ph = st.empty()
-        st.session_state.nets, st.session_state.hist = train(
-            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph)
-        st.success("Training complete — check the **Results** tab.")
-    if st.session_state.hist:
-        h = st.session_state.hist
-        f, a = plt.subplots(figsize=(8, 3.6), facecolor="none")
-        a.plot(h["d"], color=CY, lw=2, label="L_data"); a.plot(h["p"], color=AM, lw=2, label="L_physics")
-        a.set_yscale("log"); a.set_xlabel("epoch"); a.set_ylabel("loss (log)")
-        a.legend(frameon=False); ax0(a); st.pyplot(f)
-    elif not train_btn:
-        st.info("Hit **Train PINN** in the sidebar.")
-
-# ---------- 3 · RESULTS (base; truth-guarded, variable run count) ----------
-with tb[3]:
-    st.markdown("#### Inverse recovery")
-    if st.session_state.nets and st.session_state.data:
-        d, r = st.session_state.data, evaluate(st.session_state.nets, st.session_state.data)
-        rel = lambda p, t: float(np.mean(np.abs(p - t) / (np.abs(t) + 1e-8)) * 100)
-        comb = lambda K, h, e: K*h**3 + e
-        truth = bool(d.get("has_truth", False)) and d.get("psi") is not None
-        n = len(d["runs"])
-
-        def h_err_for(i):
-            run = d["runs"][i]
-            if truth and run.get("h") is not None and len(run["h"]) == len(r["hs"][i]):
-                return rel(r["hs"][i], run["h"]), "rec"          # synthetic: dense recovery
-            with torch.no_grad():                                  # manual: fit / recovery @ data τ
-                hd = st.session_state.nets["h_nets"][i](
-                    torch.tensor(run["tau_s"], dtype=torch.float32).reshape(-1, 1), 1.0).numpy().flatten()
-            if run.get("h") is not None:
-                return rel(hd, run["h"]), "rec@data"
-            return rel(hd, run["h_meas"]), "fit"
-
+        param, ms, free = tr['param'], tr['ms'], tr['free']
+        tau = np.linspace(0, 1, 300); tt = torch.tensor(tau, dtype=torch.float32).reshape(-1, 1)
+        with torch.no_grad():
+            Pp = param['psi'](tt).numpy().ravel(); Ep = param['en'](tt).numpy().ravel()
+            hp = [param['hn'][i](tt, 1.0).numpy().ravel() for i in range(len(runs))]
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Ψ(τ) error", f"{rel(r['psi'], d['psi']):.1f}%" if truth else "—")
-        m2.metric("E(τ) error", f"{rel(r['e'], d['e']):.1f}%" if truth else "—")
-        he0, lab0 = h_err_for(0)
-        m3.metric(f"h run A ({lab0})", f"{he0:.2f}%")
-        if n >= 2:
-            he1, lab1 = h_err_for(1); m4.metric(f"h run B ({lab1})", f"{he1:.2f}%")
+        if has_truth:
+            m1.metric("Ψ(τ) error", f"{rel(Pp, runs[0]['Pt']):.1f}%"); m2.metric("Ẽ(τ) error", f"{rel(Ep, runs[0]['Et']):.1f}%")
         else:
-            m4.metric("h run B", "—")
-
+            m1.metric("Ψ(τ)", "no truth"); m2.metric("Ẽ(τ)", "no truth")
+        h0e = rel(param['hn'][0](runs[0]['td'], 1.0).detach().numpy().ravel(), runs[0]['h_meas'])
+        m3.metric("ĥ run A (fit)", f"{h0e:.1f}%")
+        if len(runs) > 1:
+            h1e = rel(param['hn'][1](runs[1]['td'], 1.0).detach().numpy().ravel(), runs[1]['h_meas']); m4.metric("ĥ run B (fit)", f"{h1e:.1f}%")
+        else: m4.metric("ĥ run B", "—")
         c1, c2 = st.columns(2)
         with c1:
             f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-            if truth:
-                a.plot(d["tau"], d["psi"], color=CY, lw=2.4, label="true Ψ")
-                a.plot(d["tau"], d["e"], color=AM, lw=2.4, label="true E")
-            a.plot(d["tau"], r["psi"], color=CY, lw=2, ls="--", label="pred Ψ")
-            a.plot(d["tau"], r["e"], color=AM, lw=2, ls="--", label="pred E")
-            a.set_xlabel("τ"); a.legend(frameon=False, fontsize=8); ax0(a)
-            a.set_title("Shared Ψ & E " + ("recovery" if truth else "(no ground truth)")); st.pyplot(f)
+            if has_truth: a.plot(tau, runs[0]['Pt'], color="#34d6cf", lw=2.4, label="true Ψ"); a.plot(tau, runs[0]['Et'], color="#f0a93b", lw=2.4, label="true Ẽ")
+            a.plot(tau, Pp, '--', color="#34d6cf", lw=2, label="pred Ψ"); a.plot(tau, Ep, '--', color="#f0a93b", lw=2, label="pred Ẽ")
+            a.set_title("Shared Ψ & Ẽ"); a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
         with c2:
             f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-            for i in range(n):
-                cp = comb(r["Ks"][i], r["hs"][i], r["e"])
-                if truth and d.get("K_true") is not None:
-                    ct = comb(d["K_true"][i], d["runs"][i]["h"], d["e"])
-                    a.plot(d["tau"], ct, color=[CY, AM][i % 2], lw=2.4, label=f"true run{i}")
-                a.plot(d["tau"], cp, color=[CY, AM][i % 2], lw=2, ls="--", label=f"pred run{i}")
-            a.set_xlabel("τ"); a.set_ylabel("Kh³+E"); a.legend(frameon=False, fontsize=8); ax0(a)
-            a.set_title("Combined ODE term (the identifiable part)"); st.pyplot(f)
+            for i in range(len(runs)):
+                cp = (runs[i]['w'] ** 2) * Pp * hp[i] ** 3 + Ep
+                a.plot(tau, cp, '--', color=["#34d6cf", "#f0a93b"][i], lw=2, label=f"pred run{i}")
+                if has_truth:
+                    ct = (runs[i]['w'] ** 2) * runs[i]['Pt'] * runs[i]['h'] ** 3 + runs[i]['Et']; a.plot(tau, ct, color=["#34d6cf", "#f0a93b"][i], lw=2.4, alpha=.5, label=f"true run{i}")
+            a.set_title("Combined ODE term (identifiable part)"); a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
+        hor = horizon_w(param['hn'], runs[0]['w'], runs[1]['w']) if len(runs) > 1 else None
+        if hor:
+            f, a = plt.subplots(figsize=(7, 3.4), facecolor="none")
+            a.plot(hor['tau'], hor['c'], color="#e9edf2", lw=2); a.axvline(0.2, color="#ff6b6b", ls=':')
+            a.set_title(f"2-run Ψ leverage c(τ) · {100*hor['frac_early']:.0f}% in τ<0.2"); ax0(a); st.pyplot(f)
+        with torch.no_grad(): Pf = free['psi'](tt).numpy().ravel()
+        f, a = plt.subplots(figsize=(7, 3.4), facecolor="none")
+        if has_truth: a.plot(tau, runs[0]['Pt'], color="#34d6cf", lw=2.4, label="true Ψ")
+        a.plot(tau, Pf, '--', color="#ff6b6b", lw=2, label="free Ψ (diagnostic)")
+        a.set_title("Free‑Ψ diagnostic — fits the sum, hallucinates the split"); a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
+        v, arel, drel, note = verdict(ms, hor)
+        st.markdown(status_card('warn' if drel > 0.5 else 'ok', "Trust verdict",
+                                [f"{k}: {val}" for k, val in v.items()] + [note, f"multi-start Ψ_A spread/median={arel:.2f}, decay spread/median={drel:.2f}"]), unsafe_allow_html=True)
 
-        if not truth:
-            st.caption(" Manual data has no hidden Ψ/E to compare against, so Ψ/E tiles read “—” and "
-                       "the h tiles show the data-fit. The *combined* term’s shape is what the physics pins — "
-                       "trust it (and E) more than Ψ alone; the Ψ/E split is the known identifiability limit.")
-        st.caption(" Identifiability: K and  trade off against each other — the *combined* term "
-                   "Kh³+E is what the data actually pins down.")
+with t_man:
+    st.markdown(sec("05", "Manual input & normalization", "Load raw dimensional data; the lab auto‑detects each run's wet thickness and checks the normalization live."), unsafe_allow_html=True)
+    if source != "Manual":
+        st.markdown('<div class="note">Switch <b>Data source → Manual</b> in the sidebar to load your own thickness data. The synthetic demo is already dimensionless (h_wet=1, τ∈[0,1]).</div>', unsafe_allow_html=True)
     else:
-        st.info("Generate or load data, then train.")
+        st.markdown("**1 · Load raw data** (columns `run_id, t, h, rpm`; `rpm` optional). Edit the table, then press *Load & normalize*.", unsafe_allow_html=True)
+        up = st.file_uploader("CSV file", type=["csv"], key="csvf")
+        txt = st.text_area("or paste CSV", value="", height=150, key="paste", placeholder=EXAMPLE)
+        ed = st.data_editor(EXAMPLE_DF, num_rows="dynamic", use_container_width=True, key="raw_ed", hide_index=True,
+                            column_config={"run_id": st.column_config.NumberColumn("run_id", step=1),
+                                           "rpm": st.column_config.NumberColumn("rpm", step=100)})
+        if st.button("⬇  Load & normalize raw data", use_container_width=True):
+            if up is not None: new = parse_text(up.getvalue().decode("utf-8-sig"))
+            elif txt.strip(): new = parse_text(txt)
+            else: new = parse_df(ed)
+            if new:
+                st.session_state['raw_runs'] = new
+                for k in list(st.session_state.keys()):
+                    if k.startswith('hw_') or k == 'tr_manual': st.session_state.pop(k, None)
+                st.rerun()
+            else: st.error("Could not read any rows — need at least columns `t` and `h`.")
+        st.markdown("**2 · Normalization** (auto‑detect on by default; override per run if needed).", unsafe_allow_html=True)
+        ca, cb = st.columns(2)
+        with ca:
+            auto_h = st.checkbox("Auto h_wet = each run's thickness at its earliest time", value=st.session_state.get('auto_h', True), key="auto_h")
+            if not auto_h:
+                for r in st.session_state.get('raw_runs', DEFAULT_RAW):
+                    rh0 = float(r['h'][int(np.argmin(r['t']))])
+                    st.number_input(f"h_wet run {r['id']}  (raw h@start ≈ {rh0:.0f})", value=float(st.session_state.get(f'hw_{r["id"]}', rh0)), key=f'hw_{r["id"]}')
+        with cb:
+            auto_t = st.checkbox("Auto t_ref = global max time", value=st.session_state.get('auto_t', True), key="auto_t")
+            if not auto_t:
+                st.number_input("t_ref", value=float(st.session_state.get('tr_manual', gmax)), key="tr_manual")
+        st.markdown("**3 · Live normalization report**", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(diag, columns=["run", "rpm", "h_wet", "t_ref", "τ_min", "τ_max", "h̃@earliest", "pts"]),
+                     use_container_width=True, hide_index=True)
+        st.markdown(status_card(level, "Normalization gate — " + level_txt,
+                                ([f"⛔ {x}" for x in issues] + [f"⚠ {x}" for x in warns]) or None), unsafe_allow_html=True)
 
-# ---------- 4 · MANUAL / CSV (ADDED TAB) ----------
-with tb[4]:
-    st.markdown("#### Manual / CSV input")
-    st.caption("Give thickness-vs-time for one or more spin runs. Required columns: **t, h**. "
-               "Optional: **run_id** (defaults to 0), **rpm** (needed for the multi-run ω² lever), "
-               "**h_true** (to validate the thickness fit). If your values are dimensional, set "
-               "**h_wet** and **t_ref** below so that h = h/h_wet (⇒ h(0)=1) and τ = t/t_ref (⇒ τ∈[0,1]).")
-
-    with st.expander("normalisation (h_wet, t_ref, default RPM)", expanded=True):
-        nc1, nc2 = st.columns(2)
-        with nc1:
-            h_wet = st.number_input("h_wet (same units as h)", 1e-9, 1e9, 1.0, format="%.4f",
-                                    help="thickness at t=0; if your data is already dimensionless (h starts at 1) leave 1.0")
-        with nc2:
-            t_ref = st.number_input("t_ref (same units as t)", 1e-9, 1e9, 1.0, format="%.4f",
-                                    help="pick so τ = t/t_ref spans ~[0,1]; if τ already in [0,1] leave 1.0")
-        default_rpm = st.number_input("default RPM (used when a run has no rpm column)", 100, 10000, 3000, 100)
-
-    st.markdown("**Option 1 — upload a CSV file**")
-    upl = st.file_uploader("CSV file", type=["csv"], key="csvfile")
-
-    st.markdown("**Option 2 — paste CSV text**")
-    txt = st.text_area(" ", value="", height=170, key="csvtxt", placeholder=_MANUAL_EXAMPLE)
-    if st.button("load example into the paste box", key="ldex"):
-        st.session_state["csvtxt"] = _MANUAL_EXAMPLE; st.rerun()
-
-    st.markdown("**Option 3 — type / edit a table**")
-    df0 = st.session_state.get("df0")
-    if df0 is None:
-        df0 = pd.DataFrame(columns=["run_id", "t", "h", "rpm"], index=range(4)).astype(
-            {"run_id": "float", "t": "float", "h": "float", "rpm": "float"})
-    df = st.data_editor(df0, num_rows="dynamic", use_container_width=True, key="dfedit", hide_index=True)
-    st.session_state["df0"] = df
-
-    if st.button("Parse & load this data", use_container_width=True, key="parsebtn"):
-        text = None
-        if upl is not None:
-            text = upl.getvalue().decode("utf-8-sig")
-        elif st.session_state.get("csvtxt", "").strip():
-            text = st.session_state["csvtxt"]
-        elif df is not None and len(df):
-            text = df.to_csv(index=False)
-        if not text:
-            st.error("Provide a CSV file, pasted text, or table rows first.")
-        else:
-            rows = _parse_rows(text)
-            if not rows:
-                st.error("No readable rows found — the header must contain at least **t** and **h**.")
-            else:
-                mdata = _build_manual(rows, h_wet, t_ref, default_rpm)
-                if mdata is None:
-                    st.error("Could not build runs (each run needs ≥ 2 points and h_wet, t_ref > 0).")
-                else:
-                    st.session_state.data = mdata
-                    st.session_state.nets = st.session_state.hist = None
-                    rps = sorted({r["rpm"] for r in mdata["runs"]})
-                    if len({r["w"] for r in mdata["runs"]}) < 2:
-                        st.warning("All runs share the same ω² scaling → no multi-run lever on Ψ. "
-                                   "Add differing **rpm** values per run to break the Ψ/E degeneracy.")
-                    st.success(f"Loaded {len(mdata['runs'])} run(s) · rpms={rps} · "
-                               f"rpm_ref={mdata['manual_meta']['rpm_ref']}. Now hit ** Train PINN**.")
-                    prev = []
-                    for i, r in enumerate(mdata["runs"]):
-                        for ts, hs in zip(r["tau_s"], r["h_meas"]):
-                            prev.append({"run": i, "τ": round(float(ts), 3),
-                                         "h": round(float(hs), 3), "w": round(float(r["w"]), 3)})
-                    st.dataframe(prev, use_container_width=True, hide_index=True)
-
-    if isinstance(st.session_state.get("data"), dict) and st.session_state["data"].get("manual_meta"):
-        st.info("Manual data is currently loaded. (Switching to **Synthetic** and pressing "
-                "** Generate data** will replace it.)")
-
-# ---------- 5 · MODEL (base) ----------
-with tb[5]:
-    st.markdown("#### The model")
-    st.latex(r"\frac{d\tilde h}{d\tau} \;=\; -\,\tilde K(\tau)\,\tilde h^{3} \;-\; \tilde E(\tau),"
-             r"\qquad \tilde K(\tau)=\Big(\tfrac{\omega}{\omega_{\mathrm{ref}}}\Big)^{2}\Psi(\tau)")
+with t_mod:
+    st.markdown(sec("06", "About & honest limits", "What the gate checks, and what thickness data can and cannot tell you."), unsafe_allow_html=True)
     st.markdown("""
-    - **h(τ)** — dimensionless film thickness, **Ψ(τ)** shared latent convective term, **E(τ)** evaporation.
-    - Two runs at different RPM share **Ψ** and **E**; only the ω² scaling of K differs → this is what makes the
-      inverse problem *identifiable in principle*.
-    - The PINN enforces the ODE at unlabeled collocation points (physics loss) while fitting sparse thickness
-      data (data loss). The thickness net uses a hard ansatz h = 1 − τ·softplus(·) so h(0)=1 exactly.
-    - **Known failure mode:** Ψ and E are individually hard to disentangle — the optimizer can trade one against
-      the other while still matching h(τ) almost perfectly. Watch the **Results** tab: a small h error alongside a
-      large Ψ error is the *expected* non-identifiability signature, not a training bug.
-    - **Manual data:** with no hidden truth, the app reports data-fit quality and the combined ODE term only; the
-      Ψ/E *split* remains the structural limit. To recover Ψ decay you need dense *early*-time samples (τ≲0.2) or a
-      viscosity-sensitive measurement.
-    """)
+<div class="note"><b>The normalization gate</b> blocks training when, for any run, h̃ at the earliest
+point is not ≈ 1 (your h_wet is wrong), τ leaves [0,1] (your t_ref is wrong), or thickness goes ≤ 0.
+Each message names the run and the exact fix. Warnings (h̃>1.08, or a single ω‑scaling) never block.</div>
+
+**What thickness recovers:** thickness (a few %), evaporation Ẽ (~10–20%), and the *combined* term
+w²Ψĥ³+ (the identifiable part). With a constrained Ψ the amplitude/decaying shape come back right‑order.
+
+**What it cannot:** the viscosity *decay rate*. Three independent diagnostics agree — the multi‑start
+spread, the free‑Ψ mirror image, and the information horizon (≈95% of the two‑run Ψ leverage sits in
+τ<0.2, where the film is still thick). Cleaner data won't fix it; the information isn't in terminal‑weighted
+thickness. To see viscosity *dynamics*, sample τ<0.2 densely or add a viscosity‑sensitive observable.
+""", unsafe_allow_html=True)
