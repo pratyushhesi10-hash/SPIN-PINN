@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Thin-Film Inverse Lab", page_icon="◈", layout="wide")
+st.set_page_config(page_title="Thin-Film Inverse Lab", page_icon="🔬", layout="wide")
 
 # ── Professional Scientific Instrument Theme ─────────────────────────────────
 st.markdown(r"""
@@ -357,7 +357,6 @@ header {visibility: hidden;}
 st.markdown("""
 <div style="margin-bottom: 2rem;">
     <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 1rem;">
-        <span style="font-size: 2rem;">◈</span>
         <div>
             <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-secondary); margin-bottom: 4px;">
                 Physics-Informed Neural Networks
@@ -626,7 +625,7 @@ with st.sidebar:
     source = st.radio("Data Source", ["Synthetic", "Manual"], index=0,
                       help="Synthetic = built-in ground truth for testing. Manual = upload your raw thickness data.")
     
-    with st.expander("⚙️ Synthetic Ground Truth & Simulator", expanded=(source == "Synthetic")):
+    with st.expander("Synthetic Ground Truth & Simulator", expanded=(source == "Synthetic")):
         PA = st.slider("Ψ_A (viscosity amplitude)", 0.1, 3.0, 1.2, 0.05, 
                        help="Amplitude parameter A in Ψ(τ) = A·exp(-d·τ)")
         PD = st.slider("Ψ decay rate", 0.5, 6.0, 3.0, 0.1,
@@ -646,7 +645,7 @@ with st.sidebar:
         seed = st.number_input("Random seed", 0, 999, 42,
                                help="Seed for reproducible synthetic data generation")
     
-    with st.expander("🧠 Training Configuration", expanded=False):
+    with st.expander("Training Configuration", expanded=False):
         ea = st.slider("Phase A epochs (data fit)", 100, 1500, 400, 50,
                        help="Initial phase: fit neural network to measurement data only")
         eb = st.slider("Phase B epochs (physics)", 100, 1500, 500, 50,
@@ -699,7 +698,7 @@ st.markdown(f"""
 
 # ── tabs ──────────────────────────────────────────────────────────────────────
 t_phys, t_data, t_train, t_res, t_man, t_mod = st.tabs(
-    ["◐ Physics", "📡 Data", "🧠 Train", "📊 Results", "✏️ Manual Input", "ℹ About"])
+    ["Physics", "Data", "Training", "Results", "Manual Input", "About"])
 
 with t_phys:
     st.markdown("""
