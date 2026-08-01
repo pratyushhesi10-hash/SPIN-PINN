@@ -12,96 +12,368 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Thin-Film Inverse Lab", page_icon="◈", layout="wide")
 
-# ── crafted instrument theme (ambient layers + display/body/mono pairing) ──────
+# ── Professional Scientific Instrument Theme ─────────────────────────────────
 st.markdown(r"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-:root{--ink:#e9edf2;--bg:#0c1117;--panel:rgba(255,255,255,.035);--line:rgba(233,237,242,.10);
---c:#34d6cf;--a:#f0a93b;--r:#ff6b6b;--mute:#8a97a6;
---disp:'Fraunces',serif;--body:'IBM Plex Sans',sans-serif;--mono:'JetBrains Mono',monospace;}
-html,body,[class*="css"]{font-family:var(--body);}
-[data-testid="stAppViewContainer"]{background:
-  radial-gradient(900px 520px at 92% -6%, rgba(52,214,207,.10), transparent 60%),
-  radial-gradient(820px 520px at -6% 106%, rgba(240,169,59,.07), transparent 60%),
-  var(--bg)!important;}
-[data-testid="stAppViewContainer"]::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
-  background-image:radial-gradient(rgba(233,237,242,.05) 1px,transparent 1px);background-size:26px 26px;}
-.grain{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.04;mix-blend-mode:overlay;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
-.scan{position:fixed;left:0;right:0;height:1px;z-index:0;pointer-events:none;opacity:.35;
-  background:linear-gradient(90deg,transparent,var(--c),transparent);animation:scan 9s linear infinite;}
-@keyframes scan{0%{top:-2%}100%{top:102%}}
-@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
-[data-testid="stMain"],[data-testid="stMainBlockContainer"]{background:transparent;}
-[data-testid="stSidebar"]{background:rgba(10,14,20,.82)!important;border-right:1px solid var(--line);}
-[data-testid="stSidebar"] *{color:var(--ink)!important;}
-[data-testid="stHeader"]{background:var(--bg)!important;}
-[data-testid="stToolbar"]{filter:invert(1) grayscale(1) brightness(1.7);}
-#MainMenu{visibility:hidden;} footer{visibility:hidden;}
-.block-container{padding-top:2rem;padding-bottom:2rem;max-width:1200px;}
-.stButton>button{background:var(--panel)!important;border:1px solid var(--line)!important;color:var(--ink)!important;}
-div[data-testid="stSlider"] [role="slider"]{background-color:var(--c)!important;border-color:var(--c)!important;}
-div[data-testid="stSlider"] *{color:var(--ink)!important;}
-div[data-baseweb="tab-highlight"]{background-color:var(--c)!important;}
-.kicker{font-family:var(--mono);font-size:.7rem;letter-spacing:.26em;text-transform:uppercase;color:var(--c);margin:0 0 18px;}
-.title{font-family:var(--disp);font-weight:600;font-optical-sizing:auto;line-height:.94;letter-spacing:-.02em;
-  font-size:clamp(2.6rem,6.2vw,5.2rem);margin:0;color:var(--ink);}
-.title em{font-style:italic;color:var(--a);}
-.lede{max-width:64ch;color:var(--mute);font-weight:300;font-size:1.05rem;margin:18px 0 0;line-height:1.6;}
-.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;}
-.chip{font-family:var(--mono);font-size:.7rem;padding:6px 12px;border-radius:999px;border:1px solid var(--line);
-  color:var(--mute);background:var(--panel);transition:.2s;}
-.chip:hover{border-color:var(--c);color:var(--c);transform:translateY(-2px);}
-.chip-c{border-color:rgba(52,214,207,.4);color:var(--c);} .chip-a{border-color:rgba(240,169,59,.4);color:var(--a);}
-.strip{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:26px 0 4px;padding:12px 16px;
-  border:1px solid var(--line);border-radius:12px;background:var(--panel);font-family:var(--mono);font-size:.72rem;}
-.strip .k{color:var(--mute);letter-spacing:.12em;text-transform:uppercase;}
-.strip .v{color:var(--ink);} .strip .sep{color:var(--line);}
-.g-ok{color:var(--c);} .g-warn{color:var(--a);} .g-block{color:var(--r);}
-.sec{margin:6px 0 16px;animation:rise .55s both;}
-.sec-i{font-family:var(--mono);font-size:.68rem;letter-spacing:.2em;color:var(--a);text-transform:uppercase;}
-.sec-t{font-family:var(--disp);font-weight:600;font-size:clamp(1.4rem,3vw,2rem);color:var(--ink);line-height:1.05;margin:2px 0;}
-.sec-s{color:var(--mute);font-weight:300;max-width:70ch;}
-.blk{animation:rise .55s both;}
-.status{display:flex;gap:14px;align-items:flex-start;padding:14px 18px;border-radius:12px;border:1px solid var(--line);
-  border-left:4px solid var(--mute);background:var(--panel);margin:6px 0;}
-.status.ok{border-left-color:var(--c);} .status.warn{border-left-color:var(--a);} .status.block{border-left-color:var(--r);}
-.status .dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:none;background:var(--mute);animation:pulse 1.6s infinite;}
-.status.ok .dot{background:var(--c);} .status.warn .dot{background:var(--a);} .status.block .dot{background:var(--r);}
-.status .st-t{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;margin-bottom:6px;}
-.status.ok .st-t{color:var(--c);} .status.warn .st-t{color:var(--a);} .status.block .st-t{color:var(--r);}
-.status ul{margin:0;padding-left:16px;color:var(--ink);font-size:.86rem;line-height:1.5;}
-.status li{margin:2px 0;}
-.note{border-left:3px solid var(--c);background:rgba(52,214,207,.06);border-radius:0 10px 10px 0;padding:12px 16px;
-  color:var(--ink);font-size:.9rem;} .note b{color:var(--c);}
-[data-testid="stMetric"]{background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.012));
-  border:1px solid var(--line);border-left:3px solid var(--c);border-radius:14px;padding:14px 16px;transition:.22s;}
-[data-testid="stMetric"]:hover{transform:translateY(-3px);border-left-color:var(--a);box-shadow:0 16px 34px -22px #000;}
-[data-testid="stMetricValue"]{font-family:var(--disp)!important;font-weight:600;}
-[data-testid="stMetricLabel"]{font-family:var(--mono)!important;text-transform:uppercase;letter-spacing:.1em;font-size:.62rem!important;color:var(--mute)!important;}
-.stTabs [data-baseweb="tab"]{font-family:var(--body)!important;font-weight:600!important;}
-.stTabs [data-baseweb="tab"]:hover{color:var(--c)!important;}
-.stTabs [data-baseweb="tab-list"]{border-bottom:1px solid var(--line)!important;}
-.stButton>button{border-radius:12px!important;font-weight:600!important;transition:.18s!important;}
-.stButton>button:hover{transform:translateY(-2px);box-shadow:0 12px 26px -16px var(--c);}
-hr{border-color:var(--line)!important;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+    /* Primary palette - professional scientific blue */
+    --primary: #2563eb;
+    --primary-dark: #1e40af;
+    --primary-light: #3b82f6;
+    
+    /* Accent colors for differentiation */
+    --accent-cyan: #0891b2;
+    --accent-amber: #d97706;
+    --accent-rose: #e11d48;
+    --accent-emerald: #059669;
+    
+    /* Neutral grays */
+    --bg-app: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f1f5f9;
+    --border: #e2e8f0;
+    --text-primary: #1e293b;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    
+    /* Typography */
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* Base styles */
+html, body, [class*="css"] {
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+}
+
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(180deg, var(--bg-app) 0%, var(--bg-subtle) 100%) !important;
+}
+
+/* Sidebar styling */
+[data-testid="stSidebar"] {
+    background: var(--bg-surface) !important;
+    border-right: 1px solid var(--border);
+    box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+}
+[data-testid="stSidebar"] * {
+    color: var(--text-primary) !important;
+}
+[data-testid="stSidebar"] label {
+    font-weight: 500;
+    font-size: 0.85rem;
+    color: var(--text-secondary) !important;
+}
+
+/* Headers */
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary) !important;
+}
+
+h1 { font-size: 2.25rem; }
+h2 { font-size: 1.75rem; }
+h3 { font-size: 1.25rem; }
+
+/* Main container */
+.block-container {
+    padding-top: 2.5rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+/* Section headers with numbering */
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--border);
+}
+.section-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.section-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.section-description {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    margin-top: 0.5rem;
+}
+
+/* Info cards and status boxes */
+.status-card {
+    padding: 16px 20px;
+    border-radius: 10px;
+    border-left: 4px solid;
+    background: var(--bg-surface);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin: 12px 0;
+}
+.status-card.ok { border-left-color: var(--accent-emerald); }
+.status-card.warn { border-left-color: var(--accent-amber); }
+.status-card.block { border-left-color: var(--accent-rose); }
+
+.status-title {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+.status-card.ok .status-title { color: var(--accent-emerald); }
+.status-card.warn .status-title { color: var(--accent-amber); }
+.status-card.block .status-title { color: var(--accent-rose); }
+
+.status-content {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+.status-content ul {
+    margin: 8px 0 0 20px;
+    padding: 0;
+}
+.status-content li {
+    margin: 4px 0;
+}
+
+/* Metric cards */
+[data-testid="stMetric"] {
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+    transition: all 0.2s ease;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    border-color: var(--primary-light);
+}
+[data-testid="stMetricValue"] {
+    font-family: var(--font-sans) !important;
+    font-weight: 600 !important;
+    font-size: 1.75rem !important;
+    color: var(--text-primary) !important;
+}
+[data-testid="stMetricLabel"] {
+    font-family: var(--font-mono) !important;
+    font-size: 0.7rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    color: var(--text-secondary) !important;
+}
+
+/* Buttons */
+.stButton > button {
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    border: 1px solid var(--border) !important;
+    background: var(--bg-surface) !important;
+    color: var(--text-primary) !important;
+    padding: 0.6rem 1.5rem !important;
+    transition: all 0.15s ease !important;
+}
+.stButton > button:hover {
+    background: var(--primary) !important;
+    color: white !important;
+    border-color: var(--primary) !important;
+    transform: translateY(-1px);
+}
+
+/* Sliders */
+div[data-testid="stSlider"] {
+    margin-bottom: 1.2rem;
+}
+div[data-testid="stSlider"] * {
+    color: var(--text-primary) !important;
+}
+div[data-testid="stSlider"] [role="slider"] {
+    background-color: var(--primary) !important;
+    border-color: var(--primary) !important;
+}
+div[data-testid="stSlider"] label p {
+    font-weight: 500;
+    font-size: 0.85rem;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab"] {
+    font-family: var(--font-sans) !important;
+    font-weight: 500 !important;
+    font-size: 0.95rem !important;
+    color: var(--text-secondary) !important;
+    padding: 12px 24px !important;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--primary) !important;
+}
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    color: var(--primary) !important;
+    font-weight: 600 !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    border-bottom: 2px solid var(--border) !important;
+    gap: 2px !important;
+}
+
+/* Expander / accordion */
+.streamlit-expanderHeader {
+    background: var(--bg-subtle) !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    font-weight: 500 !important;
+}
+.streamlit-expanderContent {
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border) !important;
+    border-top: none !important;
+    border-radius: 0 0 8px 8px !important;
+    padding: 16px !important;
+}
+
+/* Dataframes */
+div[data-testid="stDataFrame"] {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* Code blocks */
+code, .stMarkdown code {
+    font-family: var(--font-mono) !important;
+    background-color: var(--bg-subtle) !important;
+    color: var(--text-primary) !important;
+    border-radius: 4px;
+    padding: 2px 6px;
+}
+
+/* Info/Warning/Error boxes */
+div[data-testid="stInfo"], div[data-testid="stWarning"], div[data-testid="stException"] {
+    border-radius: 8px;
+}
+
+/* Custom badges/chips */
+.chip {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-right: 8px;
+    margin-bottom: 8px;
+}
+.chip-primary {
+    background: rgba(37, 99, 235, 0.1);
+    color: var(--primary);
+    border: 1px solid rgba(37, 99, 235, 0.2);
+}
+.chip-cyan {
+    background: rgba(8, 145, 178, 0.1);
+    color: var(--accent-cyan);
+    border: 1px solid rgba(8, 145, 178, 0.2);
+}
+.chip-amber {
+    background: rgba(217, 119, 6, 0.1);
+    color: var(--accent-amber);
+    border: 1px solid rgba(217, 119, 6, 0.2);
+}
+
+/* Status strip */
+.status-strip {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 14px 18px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 16px 0;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+}
+.status-label {
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.7rem;
+}
+.status-value {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.status-sep {
+    color: var(--border);
+}
+.status-ok { color: var(--accent-emerald); }
+.status-warn { color: var(--accent-amber); }
+.status-block { color: var(--accent-rose); }
+
+/* Hide Streamlit branding */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* Plot containers */
+.element-container {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+}
+
+/* Column spacing */
+.stColumns {
+    gap: 24px;
+}
 </style>
-<div class="grain"></div><div class="scan"></div>
 """, unsafe_allow_html=True)
 
+# Header section
 st.markdown("""
-<div class="kicker">physics-informed inverse lab · thin-film drying</div>
-<h1 class="title">Read the film.<br><em>Infer</em> the physics.</h1>
-<p class="lede">A PINN recovers the hidden viscosity Ψ(τ) and evaporation Ẽ(τ) from sparse thickness
-data. Paste <b>raw dimensional</b> measurements — the lab auto‑normalizes each run with its own wet
-thickness, then a <b>normalization gate</b> checks h̃(0)≈1 and τ∈[0,1] and refuses to train with a
-plain‑English diagnosis if anything is off.</p>
-<div class="chips">
-  <span class="chip chip-c">dĥ/dτ = −w²Ψĥ³ − Ẽ</span>
-  <span class="chip">per-run h_wet · auto-detected</span>
-  <span class="chip chip-a">normalization gate</span>
-  <span class="chip">trust verdict</span>
+<div style="margin-bottom: 2rem;">
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 1rem;">
+        <span style="font-size: 2rem;">◈</span>
+        <div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-secondary); margin-bottom: 4px;">
+                Physics-Informed Neural Networks
+            </div>
+            <h1 style="margin: 0; font-size: 2.25rem;">Thin-Film Inverse Lab</h1>
+        </div>
+    </div>
+    <p style="color: var(--text-secondary); font-size: 1.05rem; line-height: 1.6; max-width: 80ch;">
+        A PINN framework that recovers hidden viscosity Ψ(τ) and evaporation Ẽ(τ) from sparse thickness measurements. 
+        Upload <strong>raw dimensional data</strong> — the lab auto-normalizes each run and validates the results.
+    </p>
+    <div style="margin-top: 1.5rem;">
+        <span class="chip chip-cyan">dĥ/dτ = −ω²Ψĥ³ − Ẽ</span>
+        <span class="chip chip-primary">Per-run Normalization</span>
+        <span class="chip chip-amber">Validation Gate</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -342,29 +614,59 @@ def demo_build(PA, PD, EB, ED, rpm_a, rpm_b, n_meas, noise, seed):
                          hw_used=1.0, tr_used=1.0, raw_h0=1.0, raw_tmax=1.0, n_pts=len(idx), id=i))
     return runs
 
-def ax0(a): a.tick_params(colors="#8a97a6"); a.grid(alpha=.22); return a
-plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none", "axes.edgecolor": "#2a3340",
-    "axes.labelcolor": "#c4cedd", "text.color": "#c4cedd", "xtick.color": "#8a97a6", "ytick.color": "#8a97a6",
-    "axes.grid": True, "grid.color": "#1a212c", "axes.spines.top": False, "axes.spines.right": False})
+def ax0(a): a.tick_params(colors="#475569"); a.grid(alpha=.3); return a
+plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none", "axes.edgecolor": "#e2e8f0",
+    "axes.labelcolor": "#1e293b", "text.color": "#1e293b", "xtick.color": "#475569", "ytick.color": "#475569",
+    "axes.grid": True, "grid.color": "#e2e8f0", "axes.spines.top": False, "axes.spines.right": False})
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div class="kicker" style="margin-top:6px">controls</div>', unsafe_allow_html=True)
-    source = st.radio("Data source", ["Synthetic", "Manual"], index=0,
-                      help="Synthetic = built-in truth. Manual = your raw thickness data.")
-    with st.expander("Synthetic ground truth & simulator", expanded=(source == "Synthetic")):
-        PA = st.slider("Ψ_A", 0.1, 3.0, 1.2, 0.05); PD = st.slider("Ψ decay", 0.5, 6.0, 3.0, 0.1)
-        EB = st.slider("Ẽ_B", 0.5, 6.0, 3.0, 0.1); ED = st.slider("Ẽ decay", 0.5, 6.0, 3.5, 0.1)
-        rpm_a = st.slider("Run A · RPM", 1000, 6000, 3000, 100); rpm_b = st.slider("Run B · RPM", 1000, 6000, 4500, 100)
-        n_meas = st.slider("Measurements / run", 4, 24, 8); noise = st.slider("Noise σ", 0.0, 0.10, 0.02, 0.005)
-        seed = st.number_input("Seed", 0, 999, 42)
-    with st.expander("Training", expanded=False):
-        ea = st.slider("Phase A epochs", 100, 1500, 400, 50); eb = st.slider("Phase B epochs", 100, 1500, 500, 50)
-        ec = st.slider("Phase C epochs", 100, 1500, 400, 50); ef = st.slider("Free-Ψ epochs", 200, 2000, 900, 100)
-        lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3)
-        width = st.slider("Hidden width", 16, 64, 32, 8); layers = st.slider("Hidden layers", 2, 5, 3)
-        wd = st.slider("W_data", 0.1, 5.0, 1.0, 0.1); wp = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1)
-        ns = st.slider("Multi-start restarts", 2, 10, 4)
+    st.markdown('<div style="font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-secondary); margin-bottom: 1rem;">Controls</div>', unsafe_allow_html=True)
+    
+    source = st.radio("Data Source", ["Synthetic", "Manual"], index=0,
+                      help="Synthetic = built-in ground truth for testing. Manual = upload your raw thickness data.")
+    
+    with st.expander("⚙️ Synthetic Ground Truth & Simulator", expanded=(source == "Synthetic")):
+        PA = st.slider("Ψ_A (viscosity amplitude)", 0.1, 3.0, 1.2, 0.05, 
+                       help="Amplitude parameter A in Ψ(τ) = A·exp(-d·τ)")
+        PD = st.slider("Ψ decay rate", 0.5, 6.0, 3.0, 0.1,
+                       help="Decay parameter d in Ψ(τ) = A·exp(-d·τ)")
+        EB = st.slider("Ẽ_B (evaporation amplitude)", 0.5, 6.0, 3.0, 0.1,
+                       help="Amplitude parameter B in Ẽ(τ) = B·exp(-d·τ)")
+        ED = st.slider("Ẽ decay rate", 0.5, 6.0, 3.5, 0.1,
+                       help="Decay parameter for evaporation rate")
+        rpm_a = st.slider("Run A — RPM", 1000, 6000, 3000, 100,
+                          help="Spin speed for first experimental run")
+        rpm_b = st.slider("Run B — RPM", 1000, 6000, 4500, 100,
+                          help="Spin speed for second experimental run")
+        n_meas = st.slider("Measurements per run", 4, 24, 8,
+                           help="Number of thickness measurement points per run")
+        noise = st.slider("Noise level σ", 0.0, 0.10, 0.02, 0.005,
+                          help="Gaussian noise standard deviation as fraction of signal")
+        seed = st.number_input("Random seed", 0, 999, 42,
+                               help="Seed for reproducible synthetic data generation")
+    
+    with st.expander("🧠 Training Configuration", expanded=False):
+        ea = st.slider("Phase A epochs (data fit)", 100, 1500, 400, 50,
+                       help="Initial phase: fit neural network to measurement data only")
+        eb = st.slider("Phase B epochs (physics)", 100, 1500, 500, 50,
+                       help="Second phase: enforce physics constraints with frozen data network")
+        ec = st.slider("Phase C epochs (joint)", 100, 1500, 400, 50,
+                       help="Final phase: joint optimization of data and physics losses")
+        ef = st.slider("Free-Ψ diagnostic epochs", 200, 2000, 900, 100,
+                       help="Unconstrained viscosity model for identifiability analysis")
+        lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3,
+                              help="Adam optimizer step size")
+        width = st.slider("Hidden layer width", 16, 64, 32, 8,
+                          help="Number of neurons in each hidden layer")
+        layers = st.slider("Number of hidden layers", 2, 5, 3,
+                           help="Depth of neural networks for h, Ψ, and Ẽ")
+        wd = st.slider("Weight: data loss", 0.1, 5.0, 1.0, 0.1,
+                       help="Relative weight of data fitting term in loss function")
+        wp = st.slider("Weight: physics loss", 0.1, 5.0, 1.0, 0.1,
+                       help="Relative weight of PDE residual term in loss function")
+        ns = st.slider("Multi-start restarts", 2, 10, 4,
+                       help="Number of random initializations for identifiability assessment")
 
 # ── resolve runs + gate (before tabs, so every tab + the strip agree) ─────────
 if source == "Synthetic":
@@ -381,48 +683,67 @@ else:
     runs, rpm_ref = build_runs(raw_runs, auto_h, hw_manual, auto_t, tr); has_truth = False
 issues, warns, diag = gate(runs)
 level = 'block' if issues else ('warn' if warns else 'ok')
-level_txt = {'ok': 'READY', 'warn': 'READY · NOTES', 'block': 'BLOCKED'}[level]
+level_txt = {'ok': 'Ready to Train', 'warn': 'Ready with Notes', 'block': 'Blocked'}[level]
 ws = sorted({round(r['w'], 2) for r in runs})
 
 st.markdown(f"""
-<div class="strip blk">
-  <span class="k">source</span><span class="v">{source}</span><span class="sep">·</span>
-  <span class="k">runs</span><span class="v">{len(runs)}</span><span class="sep">·</span>
-  <span class="k">ω-scaling</span><span class="v">{ws}</span><span class="sep">·</span>
-  <span class="k">normalization</span><span class="g-{level}">{level_txt}</span>
+<div class="status-strip">
+  <span><span class="status-label">Data Source</span><br><span class="status-value">{source}</span></span>
+  <span class="status-sep">│</span>
+  <span><span class="status-label">Experimental Runs</span><br><span class="status-value">{len(runs)}</span></span>
+  <span class="status-sep">│</span>
+  <span><span class="status-label">ω-scaling Factors</span><br><span class="status-value">{ws}</span></span>
+  <span class="status-sep">│</span>
+  <span><span class="status-label">Validation Status</span><br><span class="status-{level}"><strong>{level_txt}</strong></span></span>
 </div>""", unsafe_allow_html=True)
 
 # ── tabs ──────────────────────────────────────────────────────────────────────
 t_phys, t_data, t_train, t_res, t_man, t_mod = st.tabs(
-    ["◐ Physics", "📡 Data", "🧠 Train", "📊 Results", "✎ Manual input", "◈ About"])
+    ["◐ Physics", "📡 Data", "🧠 Train", "📊 Results", "✏️ Manual Input", "ℹ About"])
 
 with t_phys:
-    st.markdown(sec("01", "Forward simulator", "Integrate the ground-truth ODE at the sidebar spin speeds — intuition for what the PINN must invert."), unsafe_allow_html=True)
+    st.markdown("""
+    <div class="section-header">
+        <div class="section-number">01</div>
+        <div>
+            <div class="section-title">Forward Simulator</div>
+            <div class="section-description">Integrate the ground-truth ODE at the configured spin speeds to understand what the PINN must invert.</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     te = np.linspace(0, 1, 500); c1, c2 = st.columns(2)
     with c1:
         f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-        for w, col in zip([rpm_a / rpm_a, rpm_b / rpm_a], ["#34d6cf", "#f0a93b"]):
+        for w, col in zip([rpm_a / rpm_a, rpm_b / rpm_a], ["#0891b2", "#d97706"]):
             s = solve_ivp(lambda t, h, w=w: [-(w ** 2) * PA * np.exp(-PD * t) * h[0] ** 3 - EB * np.exp(-ED * t)], (0, 1), [1.0], t_eval=te, method='RK45')
             a.plot(te, s.y[0], color=col, lw=2.4, label=f"{int(w*rpm_a)} RPM")
-        a.set_xlabel("τ"); a.set_ylabel("ĥ"); a.set_title("Thinning curves"); a.legend(frameon=False); ax0(a); st.pyplot(f)
+        a.set_xlabel("τ (dimensionless time)"); a.set_ylabel("ĥ (normalized thickness)"); a.set_title("Thinning Curves"); a.legend(frameon=False); ax0(a); st.pyplot(f)
     with c2:
         f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-        a.plot(te, PA * np.exp(-PD * te), color="#34d6cf", lw=2.4, label="Ψ(τ)")
-        a.plot(te, EB * np.exp(-ED * te), color="#f0a93b", lw=2.4, label="Ẽ(τ)")
-        a.set_xlabel("τ"); a.set_title("Hidden physics"); a.legend(frameon=False); ax0(a); st.pyplot(f)
+        a.plot(te, PA * np.exp(-PD * te), color="#0891b2", lw=2.4, label="Ψ(τ) — viscosity")
+        a.plot(te, EB * np.exp(-ED * te), color="#d97706", lw=2.4, label="Ẽ(τ) — evaporation")
+        a.set_xlabel("τ (dimensionless time)"); a.set_title("Hidden Physics Functions"); a.legend(frameon=False); ax0(a); st.pyplot(f)
 
 with t_data:
-    st.markdown(sec("02", "What the PINN sees", "Normalized sparse thickness per run (dots) plus unlabeled collocation ticks where the ODE is enforced."), unsafe_allow_html=True)
+    st.markdown("""
+    <div class="section-header">
+        <div class="section-number">02</div>
+        <div>
+            <div class="section-title">Measurement Data</div>
+            <div class="section-description">Normalized sparse thickness measurements per run (dots) plus collocation points (ticks) where the PDE residual is enforced.</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     cols = st.columns(min(len(runs), 2))
     for i in range(min(len(runs), 2)):
         with cols[i]:
             f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-            if has_truth: a.plot(runs[i].get('h') if runs[i].get('h') is not None else runs[i]['tau_s'], runs[i].get('h') if runs[i].get('h') is not None else runs[i]['h_meas'], color=["#34d6cf", "#f0a93b"][i], lw=2.2, alpha=.5, label="true ĥ")
-            a.scatter(runs[i]['tau_s'], runs[i]['h_meas'], color=["#34d6cf", "#f0a93b"][i], s=46, zorder=5, label="data")
-            a.scatter(np.sort(np.random.RandomState(i).uniform(0, 1, 200)), np.zeros(200), marker="|", color="#5a6675", s=50, label="collocation")
-            a.set_xlabel("τ"); a.set_ylabel("ĥ"); a.set_title(f"Run {runs[i]['id']} · w={runs[i]['w']:.2f}"); a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
+            if has_truth: a.plot(runs[i].get('h') if runs[i].get('h') is not None else runs[i]['tau_s'], runs[i].get('h') if runs[i].get('h') is not None else runs[i]['h_meas'], color=["#0891b2", "#d97706"][i], lw=2.2, alpha=.5, label="true ĥ")
+            a.scatter(runs[i]['tau_s'], runs[i]['h_meas'], color=["#0891b2", "#d97706"][i], s=46, zorder=5, label="measurements")
+            a.scatter(np.sort(np.random.RandomState(i).uniform(0, 1, 200)), np.zeros(200), marker="|", color="#94a3b8", s=50, label="collocation")
+            a.set_xlabel("τ (dimensionless time)"); a.set_ylabel("ĥ (normalized thickness)"); a.set_title(f"Run {runs[i]['id']} · ω={runs[i]['w']:.2f}"); a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
     if not has_truth:
-        st.caption(f"Normalization used — h_wet per run: " + ", ".join(f"run {r['id']}={r['hw_used']:.0f}" for r in runs) + f" · t_ref={runs[0]['tr_used']:.1f}.")
+        st.caption(f"**Normalization applied** — h_wet per run: " + ", ".join(f"run {r['id']}={r['hw_used']:.0f}" for r in runs) + f" · t_ref={runs[0]['tr_used']:.1f}.")
 
 with t_train:
     st.markdown(sec("03", "Train the inverse model", "Constrained Ψ(τ)=A·exp(−d·τ) + shared Ẽ, then a free‑Ψ run as the unidentifiability diagnostic."), unsafe_allow_html=True)
