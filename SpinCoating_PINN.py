@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from style import load_css, chip
 from style import load_css, chip, style_matplotlib
 
-st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🧪", layout="wide")
+
 load_css()
 style_matplotlib()   # add this line
 
