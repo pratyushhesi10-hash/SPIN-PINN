@@ -12,57 +12,46 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ─────────────────────────── Page & theme (unchanged base) ───────────────────────────
-st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🌀", layout="wide")
+# ─────────────────────────── Page & theme ───────────────────────────
+st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🔬", layout="wide")
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
-html,body,[class*="css"],.stMarkdown{font-family:'IBM Plex Sans',sans-serif;}
+@import url('https://fonts.googleapis.com/css2?family=Calibri:wght@400;500;600;700&display=swap');
+html,body,[class*="css"],.stMarkdown{font-family:'Calibri','Segoe UI',Arial,sans-serif;}
 [data-testid="stAppViewContainer"]{
-  background:
-   radial-gradient(1100px 700px at 88% -8%, rgba(34,211,238,.08), transparent 60%),
-   radial-gradient(900px 650px at -8% 108%, rgba(251,191,36,.06), transparent 60%),
-   radial-gradient(800px 800px at 50% 130%, rgba(56,189,248,.05), transparent 60%),
-   #0b1220;}
-[data-testid="stAppViewContainer"]::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
-  background-image:radial-gradient(rgba(148,163,184,.08) 1px, transparent 1px);background-size:26px 26px;}
+  background:#f5f7fa;}
 [data-testid="stMain"],[data-testid="stMainBlockContainer"]{background:transparent;}
-[data-testid="stSidebar"]{background:rgba(13,20,32,.78);border-right:1px solid rgba(148,163,184,.12);}
-.hero{padding:6px 0 2px;}
+[data-testid="stSidebar"]{background:#ffffff;border-right:1px solid #e0e0e0;}
+.hero{padding:8px 0 4px;}
 .hero-top{display:flex;align-items:center;gap:16px;}
-.spin{font-size:44px;display:inline-block;animation:spin 7s linear infinite;}
-@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-.kicker{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.22em;color:#22d3ee;text-transform:uppercase;}
-.title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:44px;line-height:1.05;margin:2px 0 0;color:#eef3fb;}
-.title .accent{color:#fbbf24;}
-.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
-.chip{font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:5px 11px;border-radius:999px;
-  border:1px solid rgba(148,163,184,.28);color:#cbd5e1;background:rgba(148,163,184,.08);transition:.2s;}
-.chip:hover{border-color:#22d3ee;color:#67e8f9;transform:translateY(-1px);}
-.chip-cyan{border-color:rgba(34,211,238,.45);color:#67e8f9;background:rgba(34,211,238,.10);}
-.chip-amber{border-color:rgba(251,191,36,.45);color:#fcd34d;background:rgba(251,191,36,.10);}
-.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid rgba(148,163,184,.18);}
-.stTabs [data-baseweb="tab"]{font-family:'Space Grotesk',sans-serif;font-weight:600;}
-[data-testid="stMetric"]{background:rgba(148,163,184,.07);border:1px solid rgba(148,163,184,.16);
-  border-radius:14px;padding:12px 16px;transition:.25s;}
-[data-testid="stMetric"]:hover{border-color:rgba(34,211,238,.5);transform:translateY(-2px);}
-[data-testid="stMetricLabel"]{color:#94a3b8;}
-[data-testid="stMetricValue"]{font-family:'Space Grotesk',sans-serif;color:#eef3fb;}
-.stButton>button{border-radius:12px;font-family:'Space Grotesk',sans-serif;font-weight:600;transition:.2s;}
-.stButton>button:hover{transform:translateY(-2px);}
+.kicker{font-size:11px;letter-spacing:.15em;color:#1976d2;text-transform:uppercase;font-weight:600;}
+.title{font-weight:700;font-size:36px;line-height:1.1;margin:4px 0 0;color:#1a1a1a;}
+.title .accent{color:#1976d2;}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
+.chip{font-size:12px;padding:6px 14px;border-radius:6px;
+  border:1px solid #c0c0c0;color:#424242;background:#fafafa;}
+.chip-cyan{border-color:#1976d2;color:#1565c0;background:#e3f2fd;}
+.chip-amber{border-color:#f57c00;color:#e65100;background:#fff3e0;}
+.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid #e0e0e0;}
+.stTabs [data-baseweb="tab"]{font-weight:600;}
+[data-testid="stMetric"]{background:#ffffff;border:1px solid #e0e0e0;
+  border-radius:8px;padding:12px 16px;}
+[data-testid="stMetricLabel"]{color:#616161;}
+[data-testid="stMetricValue"]{color:#1a1a1a;}
+.stButton>button{border-radius:6px;font-weight:600;}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="hero">
-  <div class="hero-top"><span class="spin">🌀</span>
+  <div class="hero-top">
     <div><div class="kicker">Physics-Informed Neural Network · Inverse Discovery</div>
     <h1 class="title">SpinCoat <span class="accent">PINN</span> Lab</h1></div></div>
   <div class="chips">
-    <span class="chip">dĥ/dτ = −K̃(τ)·ĥ³ − Ẽ(τ)</span>
-    <span class="chip chip-cyan">2 spin runs · shared Ψ &amp; Ẽ</span>
-    <span class="chip chip-amber">synthetic or YOUR data</span>
+    <span class="chip">dh/dτ = −K(τ)·h³ − E(τ)</span>
+    <span class="chip chip-cyan">2 spin runs · shared Ψ & E</span>
+    <span class="chip chip-amber">synthetic or your data</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -221,30 +210,30 @@ plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none",
                      "axes.edgecolor": "#334155", "axes.labelcolor": "#cbd5e1",
                      "text.color": "#cbd5e1", "axes.grid": True, "grid.color": "#1e293b",
                      "axes.spines.top": False, "axes.spines.right": False,
-                     "font.family": "IBM Plex Sans"})
+                     "font.family": "Calibri"})
 CY, AM = "#22d3ee", "#fbbf24"
 def ax0(a): a.tick_params(colors="#94a3b8"); a.grid(alpha=.25); return a
 
-# ─────────────────────────── Sidebar (base + data-source toggle) ───────────────────────────
-st.sidebar.markdown("### ⚙️ Controls")
+# ─────────────────────────── Sidebar ───────────────────────────
+st.sidebar.markdown("### Controls")
 source = st.sidebar.radio("Data source", ["Synthetic", "Manual / CSV"], index=0,
                           help="Synthetic = the app generates the hidden truth. "
                                "Manual / CSV = your own thickness-vs-time data.")
 SRC_SYN = (source == "Synthetic")
 
-with st.sidebar.expander("🧪 Physics", expanded=True):
+with st.sidebar.expander("Physics", expanded=True):
     psi_A = st.slider("Ψ_A · convective strength", 0.1, 3.0, 1.2, 0.05)
     psi_d = st.slider("Ψ decay", 0.5, 6.0, 3.0, 0.1)
     E_B   = st.slider("E_B · evaporation strength", 0.5, 6.0, 3.0, 0.1)
     E_d   = st.slider("E decay", 0.5, 6.0, 3.5, 0.1)
     rpm_a = st.slider("Run A · RPM", 1000, 6000, 3000, 100)
     rpm_b = st.slider("Run B · RPM", 1000, 6000, 4500, 100)
-with st.sidebar.expander("🧫 Synthetic data", expanded=SRC_SYN):
+with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
     n_meas  = st.slider("Measurements / run", 4, 24, 8)
     noise   = st.slider("Noise σ", 0.0, 0.10, 0.02, 0.005)
     n_colloc = st.slider("Collocation points", 50, 400, 200, 10)
     seed = st.number_input("Seed", 0, 999, 42)
-with st.sidebar.expander("🧠 Training", expanded=True):
+with st.sidebar.expander("Training", expanded=True):
     epochs = st.slider("Epochs", 200, 4000, 1500, 100)
     lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3)
     hid = st.slider("Hidden width", 16, 64, 32, 8)
@@ -254,11 +243,11 @@ with st.sidebar.expander("🧠 Training", expanded=True):
 
 st.sidebar.markdown("---")
 if SRC_SYN:
-    gen_btn = st.sidebar.button("📡 Generate data", use_container_width=True)
+    gen_btn = st.sidebar.button("Generate data", use_container_width=True)
 else:
-    st.sidebar.caption("Load your thickness data in the **✎ Manual / CSV** tab, then Train.")
+    st.sidebar.caption("Load your thickness data in the **Manual / CSV** tab, then Train.")
     gen_btn = False
-train_btn = st.sidebar.button("🧠 Train PINN", use_container_width=True, type="primary")
+train_btn = st.sidebar.button("Train PINN", use_container_width=True, type="primary")
 
 for k in ("data", "nets", "hist"):
     st.session_state.setdefault(k, None)
@@ -266,14 +255,14 @@ if gen_btn:
     st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed)
     st.session_state.nets = st.session_state.hist = None
 
-# ─────────────────────────── Tabs (base 5 + added Manual) ───────────────────────────
-tb = st.tabs(["🧪 Physics", "📡 Data", "🧠 Train", "📊 Results", "✎ Manual / CSV", "ℹ️ Model"])
+# ─────────────────────────── Tabs ───────────────────────────
+tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV", "Model"])
 
-# ---------- 0 · PHYSICS (base; note when manual) ----------
+# ---------- 0 · PHYSICS ----------
 with tb[0]:
     st.markdown("#### Live thinning simulator")
     if not SRC_SYN:
-        st.caption("ℹ️ This simulator draws the *synthetic* physics from the sliders, for intuition. "
+        st.caption("This simulator draws the *synthetic* physics from the sliders, for intuition. "
                    "Your loaded data drives the Data / Train / Results tabs.")
     tau = np.linspace(0, 1, 500); w_ref = rpm_a
     c1, c2 = st.columns(2)
@@ -281,15 +270,15 @@ with tb[0]:
         f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
         for rpm, c in ((rpm_a, CY), (rpm_b, AM)):
             a.plot(tau, simulate(psi_A, psi_d, E_B, E_d, rpm/w_ref, tau), color=c, lw=2.4, label=f"{rpm} RPM")
-        a.set_xlabel("τ"); a.set_ylabel("ĥ(τ)"); a.set_title("Film thinning ĥ(τ)")
+        a.set_xlabel("τ"); a.set_ylabel("h(τ)"); a.set_title("Film thinning h(τ)")
         a.legend(frameon=False); ax0(a); st.pyplot(f)
     with c2:
         f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
         a.plot(tau, psi_A*np.exp(-psi_d*tau), color=CY, lw=2.4, label="Ψ(τ)")
-        a.plot(tau, E_B*np.exp(-E_d*tau), color=AM, lw=2.4, label="Ẽ(τ)")
-        a.set_xlabel("τ"); a.set_title("Latent Ψ(τ) & evaporation Ẽ(τ)")
+        a.plot(tau, E_B*np.exp(-E_d*tau), color=AM, lw=2.4, label="E(τ)")
+        a.set_xlabel("τ"); a.set_title("Latent Ψ(τ) & evaporation E(τ)")
         a.legend(frameon=False); ax0(a); st.pyplot(f)
-    st.caption("K̃(τ) = (ω/ω_ref)²·Ψ(τ) — higher spin → stronger convective thinning.")
+    st.caption("K(τ) = (ω/ω_ref)²·Ψ(τ) — higher spin → stronger convective thinning.")
 
 # ---------- 1 · DATA (base; handles manual with no true curve) ----------
 with tb[1]:
@@ -304,13 +293,13 @@ with tb[1]:
                 f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
                 run = d["runs"][i]
                 if truth and run.get("h") is not None:
-                    a.plot(d["tau"], run["h"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label="true ĥ(τ)")
+                    a.plot(d["tau"], run["h"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label="true h(τ)")
                 elif run.get("h") is not None:
-                    a.plot(run["tau_s"], run["h"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label="true ĥ @data")
+                    a.plot(run["tau_s"], run["h"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label="true h @data")
                 a.scatter(run["tau_s"], run["h_meas"], color=[CY, AM][i % 2], s=46, zorder=5, label="data")
                 a.scatter(run["tau_c"], np.zeros_like(run["tau_c"]),
                           marker="|", color="#64748b", s=60, label="collocation")
-                a.set_xlabel("τ"); a.set_ylabel("ĥ"); a.set_title(f"Run {i} · {run.get('rpm', '?')} RPM")
+                a.set_xlabel("τ"); a.set_ylabel("h"); a.set_title(f"Run {i} · {run.get('rpm', '?')} RPM")
                 a.legend(frameon=False, fontsize=8); ax0(a); st.pyplot(f)
         if n > 2:
             st.caption(f"(showing first 2 of {n} runs)")
@@ -320,20 +309,20 @@ with tb[1]:
             m = d.get("manual_meta", {})
             st.caption(f"manual · {n} run(s) · h_wet={m.get('h_wet')} · t_ref={m.get('t_ref')} · rpm_ref={m.get('rpm_ref')}")
     else:
-        st.info("Hit **📡 Generate data** (synthetic) or load data in the **✎ Manual / CSV** tab.")
+        st.info("Hit **Generate data** (synthetic) or load data in the **Manual / CSV** tab.")
 
 # ---------- 2 · TRAIN (base; safe guard instead of silent synthetic) ----------
 with tb[2]:
     st.markdown("#### Training")
     if train_btn:
         if st.session_state.data is None:
-            st.warning("No data loaded yet. Use **📡 Generate data** (synthetic) or load CSV / manual "
-                       "data in the **✎ Manual / CSV** tab first.")
+            st.warning("No data loaded yet. Use **Generate data** (synthetic) or load CSV / manual "
+                       "data in the **Manual / CSV** tab first.")
             st.stop()
         prog = st.progress(0); ph = st.empty()
         st.session_state.nets, st.session_state.hist = train(
             st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph)
-        st.success("Training complete ✅ — check the **Results** tab.")
+        st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
         f, a = plt.subplots(figsize=(8, 3.6), facecolor="none")
@@ -341,7 +330,7 @@ with tb[2]:
         a.set_yscale("log"); a.set_xlabel("epoch"); a.set_ylabel("loss (log)")
         a.legend(frameon=False); ax0(a); st.pyplot(f)
     elif not train_btn:
-        st.info("Hit **🧠 Train PINN** in the sidebar.")
+        st.info("Hit **Train PINN** in the sidebar.")
 
 # ---------- 3 · RESULTS (base; truth-guarded, variable run count) ----------
 with tb[3]:
@@ -366,24 +355,24 @@ with tb[3]:
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Ψ(τ) error", f"{rel(r['psi'], d['psi']):.1f}%" if truth else "—")
-        m2.metric("Ẽ(τ) error", f"{rel(r['e'], d['e']):.1f}%" if truth else "—")
+        m2.metric("E(τ) error", f"{rel(r['e'], d['e']):.1f}%" if truth else "—")
         he0, lab0 = h_err_for(0)
-        m3.metric(f"ĥ run A ({lab0})", f"{he0:.2f}%")
+        m3.metric(f"h run A ({lab0})", f"{he0:.2f}%")
         if n >= 2:
-            he1, lab1 = h_err_for(1); m4.metric(f"ĥ run B ({lab1})", f"{he1:.2f}%")
+            he1, lab1 = h_err_for(1); m4.metric(f"h run B ({lab1})", f"{he1:.2f}%")
         else:
-            m4.metric("ĥ run B", "—")
+            m4.metric("h run B", "—")
 
         c1, c2 = st.columns(2)
         with c1:
             f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
             if truth:
                 a.plot(d["tau"], d["psi"], color=CY, lw=2.4, label="true Ψ")
-                a.plot(d["tau"], d["e"], color=AM, lw=2.4, label="true Ẽ")
+                a.plot(d["tau"], d["e"], color=AM, lw=2.4, label="true E")
             a.plot(d["tau"], r["psi"], color=CY, lw=2, ls="--", label="pred Ψ")
-            a.plot(d["tau"], r["e"], color=AM, lw=2, ls="--", label="pred Ẽ")
+            a.plot(d["tau"], r["e"], color=AM, lw=2, ls="--", label="pred E")
             a.set_xlabel("τ"); a.legend(frameon=False, fontsize=8); ax0(a)
-            a.set_title("Shared Ψ & Ẽ " + ("recovery" if truth else "(no ground truth)")); st.pyplot(f)
+            a.set_title("Shared Ψ & E " + ("recovery" if truth else "(no ground truth)")); st.pyplot(f)
         with c2:
             f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
             for i in range(n):
@@ -392,15 +381,15 @@ with tb[3]:
                     ct = comb(d["K_true"][i], d["runs"][i]["h"], d["e"])
                     a.plot(d["tau"], ct, color=[CY, AM][i % 2], lw=2.4, label=f"true run{i}")
                 a.plot(d["tau"], cp, color=[CY, AM][i % 2], lw=2, ls="--", label=f"pred run{i}")
-            a.set_xlabel("τ"); a.set_ylabel("K̃ĥ³+Ẽ"); a.legend(frameon=False, fontsize=8); ax0(a)
+            a.set_xlabel("τ"); a.set_ylabel("Kh³+E"); a.legend(frameon=False, fontsize=8); ax0(a)
             a.set_title("Combined ODE term (the identifiable part)"); st.pyplot(f)
 
         if not truth:
-            st.caption("ℹ️ Manual data has no hidden Ψ/Ẽ to compare against, so Ψ/Ẽ tiles read “—” and "
-                       "the ĥ tiles show the data-fit. The *combined* term’s shape is what the physics pins — "
-                       "trust it (and Ẽ) more than Ψ alone; the Ψ/Ẽ split is the known identifiability limit.")
-        st.caption("⚠️ Identifiability: K̃ and  trade off against each other — the *combined* term "
-                   "K̃ĥ³+Ẽ is what the data actually pins down.")
+            st.caption(" Manual data has no hidden Ψ/E to compare against, so Ψ/E tiles read “—” and "
+                       "the h tiles show the data-fit. The *combined* term’s shape is what the physics pins — "
+                       "trust it (and E) more than Ψ alone; the Ψ/E split is the known identifiability limit.")
+        st.caption(" Identifiability: K and  trade off against each other — the *combined* term "
+                   "Kh³+E is what the data actually pins down.")
     else:
         st.info("Generate or load data, then train.")
 
@@ -410,7 +399,7 @@ with tb[4]:
     st.caption("Give thickness-vs-time for one or more spin runs. Required columns: **t, h**. "
                "Optional: **run_id** (defaults to 0), **rpm** (needed for the multi-run ω² lever), "
                "**h_true** (to validate the thickness fit). If your values are dimensional, set "
-               "**h_wet** and **t_ref** below so that ĥ = h/h_wet (⇒ ĥ(0)=1) and τ = t/t_ref (⇒ τ∈[0,1]).")
+               "**h_wet** and **t_ref** below so that h = h/h_wet (⇒ h(0)=1) and τ = t/t_ref (⇒ τ∈[0,1]).")
 
     with st.expander("normalisation (h_wet, t_ref, default RPM)", expanded=True):
         nc1, nc2 = st.columns(2)
@@ -438,7 +427,7 @@ with tb[4]:
     df = st.data_editor(df0, num_rows="dynamic", use_container_width=True, key="dfedit", hide_index=True)
     st.session_state["df0"] = df
 
-    if st.button("⬇  Parse & load this data", use_container_width=True, type="primary", key="parsebtn"):
+    if st.button("Parse & load this data", use_container_width=True, type="primary", key="parsebtn"):
         text = None
         if upl is not None:
             text = upl.getvalue().decode("utf-8-sig")
@@ -462,19 +451,19 @@ with tb[4]:
                     rps = sorted({r["rpm"] for r in mdata["runs"]})
                     if len({r["w"] for r in mdata["runs"]}) < 2:
                         st.warning("All runs share the same ω² scaling → no multi-run lever on Ψ. "
-                                   "Add differing **rpm** values per run to break the Ψ/Ẽ degeneracy.")
+                                   "Add differing **rpm** values per run to break the Ψ/E degeneracy.")
                     st.success(f"Loaded {len(mdata['runs'])} run(s) · rpms={rps} · "
-                               f"rpm_ref={mdata['manual_meta']['rpm_ref']}. Now hit **🧠 Train PINN**.")
+                               f"rpm_ref={mdata['manual_meta']['rpm_ref']}. Now hit ** Train PINN**.")
                     prev = []
                     for i, r in enumerate(mdata["runs"]):
                         for ts, hs in zip(r["tau_s"], r["h_meas"]):
                             prev.append({"run": i, "τ": round(float(ts), 3),
-                                         "ĥ": round(float(hs), 3), "w": round(float(r["w"]), 3)})
+                                         "h": round(float(hs), 3), "w": round(float(r["w"]), 3)})
                     st.dataframe(prev, use_container_width=True, hide_index=True)
 
     if isinstance(st.session_state.get("data"), dict) and st.session_state["data"].get("manual_meta"):
         st.info("Manual data is currently loaded. (Switching to **Synthetic** and pressing "
-                "**📡 Generate data** will replace it.)")
+                "** Generate data** will replace it.)")
 
 # ---------- 5 · MODEL (base) ----------
 with tb[5]:
@@ -482,15 +471,15 @@ with tb[5]:
     st.latex(r"\frac{d\tilde h}{d\tau} \;=\; -\,\tilde K(\tau)\,\tilde h^{3} \;-\; \tilde E(\tau),"
              r"\qquad \tilde K(\tau)=\Big(\tfrac{\omega}{\omega_{\mathrm{ref}}}\Big)^{2}\Psi(\tau)")
     st.markdown("""
-    - **ĥ(τ)** — dimensionless film thickness, **Ψ(τ)** shared latent convective term, **Ẽ(τ)** evaporation.
-    - Two runs at different RPM share **Ψ** and **Ẽ**; only the ω² scaling of K̃ differs → this is what makes the
+    - **h(τ)** — dimensionless film thickness, **Ψ(τ)** shared latent convective term, **E(τ)** evaporation.
+    - Two runs at different RPM share **Ψ** and **E**; only the ω² scaling of K differs → this is what makes the
       inverse problem *identifiable in principle*.
     - The PINN enforces the ODE at unlabeled collocation points (physics loss) while fitting sparse thickness
-      data (data loss). The thickness net uses a hard ansatz ĥ = 1 − τ·softplus(·) so ĥ(0)=1 exactly.
-    - **Known failure mode:** Ψ and Ẽ are individually hard to disentangle — the optimizer can trade one against
-      the other while still matching ĥ(τ) almost perfectly. Watch the **Results** tab: a small ĥ error alongside a
+      data (data loss). The thickness net uses a hard ansatz h = 1 − τ·softplus(·) so h(0)=1 exactly.
+    - **Known failure mode:** Ψ and E are individually hard to disentangle — the optimizer can trade one against
+      the other while still matching h(τ) almost perfectly. Watch the **Results** tab: a small h error alongside a
       large Ψ error is the *expected* non-identifiability signature, not a training bug.
     - **Manual data:** with no hidden truth, the app reports data-fit quality and the combined ODE term only; the
-      Ψ/Ẽ *split* remains the structural limit. To recover Ψ decay you need dense *early*-time samples (τ≲0.2) or a
+      Ψ/E *split* remains the structural limit. To recover Ψ decay you need dense *early*-time samples (τ≲0.2) or a
       viscosity-sensitive measurement.
     """)
