@@ -27,7 +27,7 @@ st.markdown(
     + chip("synthetic or your data", accent=True),
     unsafe_allow_html=True,
 )
-Done
+
 # ─────────────────────────── Model (unchanged base) ───────────────────────────
 class ThicknessNet(nn.Module):
     def __init__(self, h=32, L=3):
