@@ -13,33 +13,37 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # ─────────────────────────── Page & theme ───────────────────────────
-st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="", layout="wide")
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Calibri:wght@400;500;600;700&display=swap');
 html,body,[class*="css"],.stMarkdown{font-family:'Calibri','Segoe UI',Arial,sans-serif;}
 [data-testid="stAppViewContainer"]{
-  background:#f5f7fa;}
+  background:#1a1a2e;}
 [data-testid="stMain"],[data-testid="stMainBlockContainer"]{background:transparent;}
-[data-testid="stSidebar"]{background:#ffffff;border-right:1px solid #e0e0e0;}
+[data-testid="stSidebar"]{background:#16213e;border-right:1px solid #2d3748;}
 .hero{padding:8px 0 4px;}
 .hero-top{display:flex;align-items:center;gap:16px;}
-.kicker{font-size:11px;letter-spacing:.15em;color:#1976d2;text-transform:uppercase;font-weight:600;}
-.title{font-weight:700;font-size:36px;line-height:1.1;margin:4px 0 0;color:#1a1a1a;}
-.title .accent{color:#1976d2;}
+.kicker{font-size:11px;letter-spacing:.15em;color:#4fc3f7;text-transform:uppercase;font-weight:600;}
+.title{font-weight:700;font-size:36px;line-height:1.1;margin:4px 0 0;color:#e0e0e0;}
+.title .accent{color:#4fc3f7;}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
 .chip{font-size:12px;padding:6px 14px;border-radius:6px;
-  border:1px solid #c0c0c0;color:#424242;background:#fafafa;}
-.chip-cyan{border-color:#1976d2;color:#1565c0;background:#e3f2fd;}
-.chip-amber{border-color:#f57c00;color:#e65100;background:#fff3e0;}
-.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid #e0e0e0;}
-.stTabs [data-baseweb="tab"]{font-weight:600;}
-[data-testid="stMetric"]{background:#ffffff;border:1px solid #e0e0e0;
+  border:1px solid #4fc3f7;color:#b0bec5;background:#16213e;}
+.chip-cyan{border-color:#4fc3f7;color:#81d4fa;background:#0d47a1;}
+.chip-amber{border-color:#ffb74d;color:#ffe0b2;background:#e65100;}
+.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid #2d3748;}
+.stTabs [data-baseweb="tab"]{font-weight:600;border:2px solid #4fc3f7;border-radius:6px;padding:8px 16px;}
+.stTabs [data-baseweb="tab"][aria-selected="true"]{background:#4fc3f7;color:#1a1a2e;}
+[data-testid="stMetric"]{background:#16213e;border:2px solid #4fc3f7;
   border-radius:8px;padding:12px 16px;}
-[data-testid="stMetricLabel"]{color:#616161;}
-[data-testid="stMetricValue"]{color:#1a1a1a;}
-.stButton>button{border-radius:6px;font-weight:600;}
+[data-testid="stMetricLabel"]{color:#b0bec5;}
+[data-testid="stMetricValue"]{color:#e0e0e0;}
+.stButton>button{border-radius:6px;font-weight:600;border:2px solid #4fc3f7;background:#16213e;color:#e0e0e0;}
+.stButton>button:hover{background:#4fc3f7;color:#1a1a2e;}
+[data-testid="stExpander"]{border:2px solid #2d3748;border-radius:8px;}
+summary{color:#e0e0e0;font-weight:600;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -207,12 +211,12 @@ def evaluate(nets, data):
 
 # ─────────────────────────── Plot helper (base) ───────────────────────────
 plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none",
-                     "axes.edgecolor": "#334155", "axes.labelcolor": "#cbd5e1",
-                     "text.color": "#cbd5e1", "axes.grid": True, "grid.color": "#1e293b",
+                     "axes.edgecolor": "#4fc3f7", "axes.labelcolor": "#e0e0e0",
+                     "text.color": "#e0e0e0", "axes.grid": True, "grid.color": "#2d3748",
                      "axes.spines.top": False, "axes.spines.right": False,
                      "font.family": "Calibri"})
-CY, AM = "#22d3ee", "#fbbf24"
-def ax0(a): a.tick_params(colors="#94a3b8"); a.grid(alpha=.25); return a
+CY, AM = "#4fc3f7", "#ffb74d"
+def ax0(a): a.tick_params(colors="#b0bec5"); a.grid(alpha=.3); return a
 
 # ─────────────────────────── Sidebar ───────────────────────────
 st.sidebar.markdown("### Controls")
@@ -243,11 +247,11 @@ with st.sidebar.expander("Training", expanded=True):
 
 st.sidebar.markdown("---")
 if SRC_SYN:
-    gen_btn = st.sidebar.button("Generate data", use_container_width=True)
+    gen_btn = st.sidebar.button("Generate data", use_container_width=True, key="gen_btn")
 else:
     st.sidebar.caption("Load your thickness data in the **Manual / CSV** tab, then Train.")
     gen_btn = False
-train_btn = st.sidebar.button("Train PINN", use_container_width=True, type="primary")
+train_btn = st.sidebar.button("Train PINN", use_container_width=True, key="train_btn")
 
 for k in ("data", "nets", "hist"):
     st.session_state.setdefault(k, None)
@@ -427,7 +431,7 @@ with tb[4]:
     df = st.data_editor(df0, num_rows="dynamic", use_container_width=True, key="dfedit", hide_index=True)
     st.session_state["df0"] = df
 
-    if st.button("Parse & load this data", use_container_width=True, type="primary", key="parsebtn"):
+    if st.button("Parse & load this data", use_container_width=True, key="parsebtn"):
         text = None
         if upl is not None:
             text = upl.getvalue().decode("utf-8-sig")
