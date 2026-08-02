@@ -18,6 +18,15 @@ from style import load_css, chip, style_matplotlib
 load_css()
 style_matplotlib()   # add this line
 
+# ─────────────────────────── Helper: tau sampling ───────────────────────────
+def sample_tau(n, early_frac, rng):   # early_frac of points forced into tau<0.2 (the leverage window)
+    n_e = int(round(early_frac * n)); n_l = n - n_e; pts = []
+    if n_e > 0:
+        eb = np.linspace(0.0, 0.2, n_e + 1); pts += [rng.uniform(eb[k], eb[k+1]) for k in range(n_e)]
+    if n_l > 0:
+        lb = np.linspace(0.0, 1.0, n_l + 1); pts += [rng.uniform(lb[k], lb[k+1]) for k in range(n_l)]
+    return np.array(pts)
+
 # ─────────────────────────── Page & theme ───────────────────────────
 
 st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🧪", layout="wide")
