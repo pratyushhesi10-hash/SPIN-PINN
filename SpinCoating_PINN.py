@@ -164,16 +164,38 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph):
         for i, r in enumerate(data["runs"]):                       # enumerate (was .index(r))
             td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
             hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
-            Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd)**2)
+            Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd) ** 2)
             tc = torch.tensor(r["tau_c"], dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
             res, _, _ = residual(h_nets[i], psi, e, tc, r["w"])
-            Lp = Lp + torch.mean(res**2)
-        loss = w_d*Ld + w_p*Lp; loss.backward(); opt.step()
+            Lp = Lp + torch.mean(res ** 2)
+        loss = w_d * Ld + w_p * Lp; loss.backward(); opt.step()
         hist["d"].append(Ld.item()); hist["p"].append(Lp.item()); hist["t"].append(loss.item())
         if ep % 20 == 0 or ep == epochs - 1:
-            prog.progress((ep+1)/epochs)
+            prog.progress((ep + 1) / epochs)
             ph.caption(f"epoch {ep+1}/{epochs} · L_data {Ld.item():.5f} · L_phys {Lp.item():.5f}")
-    return dict(h_nets=h_nets, psi=psi, e=e), hist
+
+    # ---- consistency probe (NEW): did enforcing the ODE wreck the data-fit? ----
+    # joint_fit    = h-error of the physics-trained nets at the data points
+    # dataonly_fit = h-error after re-fitting COPIES of those nets to data alone
+    # data that obey the ODE  -> both small ;  data that don't  -> joint_fit >> dataonly_fit
+    def _relp(pred, targ):
+        pred = pred.detach().cpu().numpy().ravel(); targ = targ.cpu().numpy().ravel()
+        return float(np.mean(np.abs(pred - targ) / (np.abs(targ) + 1e-8)) * 100)
+    joint_fit = []; dataonly_fit = []
+    for i, r in enumerate(data["runs"]):
+        td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
+        hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
+        with torch.no_grad():
+            joint_fit.append(_relp(h_nets[i](td, 1.0), hd))
+        cl = ThicknessNet(h, L); cl.load_state_dict(h_nets[i].state_dict())   # throwaway copy
+        opc = optim.Adam(cl.parameters(), lr=lr)
+        for _ in range(250):
+            opc.zero_grad(); Lc = torch.mean((cl(td, 1.0) - hd) ** 2); Lc.backward(); opc.step()
+        with torch.no_grad():
+            dataonly_fit.append(_relp(cl(td, 1.0), hd))
+
+    return dict(h_nets=h_nets, psi=psi, e=e,
+                joint_fit=joint_fit, dataonly_fit=dataonly_fit), hist
 
 def evaluate(nets, data):
     with torch.no_grad():
