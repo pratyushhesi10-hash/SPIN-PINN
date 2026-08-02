@@ -410,14 +410,15 @@ with tb[3]:
                 # ---- build the honest verdict ----
                 bad = warn = False; cons = ""
                 if do_fits and len(do_fits) == len(joint):
-                    iw = int(np.argmax(joint)); gap = joint[iw] - do_fits[iw]
-                    if joint[iw] > 40 and do_fits[iw] < 25 and gap > 30:
+                    iw = int(np.argmax(joint))
+                    ratio = joint[iw] / max(do_fits[iw], 1e-6)
+                    if joint[iw] > 40 and ratio > 3:
                         bad = True
-                        cons = ("FLAG — physics added ~%.0f%% h-error (joint %.0f%% vs data-only %.0f%%): "
-                                "these runs are NOT consistent with the spin-coating ODE" % (gap, joint[iw], do_fits[iw]))
-                    elif joint[iw] > 20 and gap > 15:
+                        cons = ("FLAG — physics made the fit %.1fx worse (joint %.0f%% vs data-only %.0f%%): "
+                                "these runs are NOT consistent with the spin-coating ODE" % (ratio, joint[iw], do_fits[iw]))
+                    elif joint[iw] > 20 and ratio > 1.8:
                         warn = True
-                        cons = "WARN — physics strained the data-fit (joint %.0f%% vs data-only %.0f%%)" % (joint[iw], do_fits[iw])
+                        cons = "WARN — physics strained the fit (joint %.0f%% vs data-only %.0f%%, %.1fx)" % (joint[iw], do_fits[iw], ratio)
                     else:
                         cons = "OK — data consistent with the ODE (joint %.0f%% ~ data-only %.0f%%)" % (joint[iw], do_fits[iw])
                 else:
