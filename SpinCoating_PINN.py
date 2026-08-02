@@ -171,7 +171,7 @@ def _build_manual(rows, h_wet, t_ref, default_rpm):
                 manual_meta=dict(h_wet=float(h_wet), t_ref=float(t_ref), rpm_ref=rpm_ref))
 
 # ─────────────────────────── Training / eval (base; .index -> enumerate) ───────────────────────────
-def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False):
+def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mono_w=0.0):
     torch.manual_seed(seed)
     h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
     psi = PsiPar() if param_psi else PsiNet(h, L)
@@ -179,7 +179,7 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False):
     p = [p for n in h_nets for p in n.parameters()] + list(psi.parameters()) + list(e.parameters())
     opt = optim.Adam(p, lr=lr); hist = dict(d=[], p=[], t=[])
     for ep in range(epochs):
-        opt.zero_grad(); Ld = Lp = 0.0
+        opt.zero_grad(); Ld = Lp = Lmono = 0.0
         for i, r in enumerate(data["runs"]):                       # enumerate (was .index(r))
             td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
             hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
@@ -187,9 +187,14 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False):
             tc = torch.tensor(r["tau_c"], dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
             res, _, _ = residual(h_nets[i], psi, e, tc, r["w"])
             Lp = Lp + torch.mean(res ** 2)
+            if mono_w > 0.0:                # enforce NON-INCREASING Psi (matches decaying ground truth)
+                pt = psi(tc); dpt = torch.autograd.grad(pt.sum(), tc, create_graph=True, retain_graph=True)[0]
+                Lmono = Lmono + torch.mean(torch.relu(dpt)) ** 2     # penalize dPsi/dtau > 0
         nrun = len(data["runs"])        # make the data/physics balance run-count-invariant
         Ld = Ld / nrun; Lp = Lp / nrun
-        loss = w_d * Ld + w_p * Lp; loss.backward(); opt.step()
+        if mono_w > 0.0:
+            Lmono = Lmono / nrun
+        loss = w_d * Ld + w_p * Lp + mono_w * Lmono; loss.backward(); opt.step()
         hist["d"].append(Ld.item()); hist["p"].append(Lp.item()); hist["t"].append(loss.item())
         if ep % 20 == 0 or ep == epochs - 1:
             prog.progress((ep + 1) / epochs)
@@ -284,6 +289,7 @@ with st.sidebar.expander("Training", expanded=True):
     lay = st.slider("Hidden layers", 2, 5, 3)
     w_d = st.slider("W_data", 0.1, 5.0, 1.0, 0.1)
     w_p = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1)
+    mono_w = st.slider("Ψ monotonicity weight (enforce decay)", 0.0, 1.0, 0.0, 0.05)
 
 st.sidebar.markdown("---")
 if SRC_SYN:
@@ -365,7 +371,7 @@ with tb[2]:
             st.stop()
         prog = st.progress(0); ph = st.empty()
         st.session_state.nets, st.session_state.hist = train(
-            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph)
+            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w)
         st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
