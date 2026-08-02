@@ -1,1 +1,40 @@
-Nothing should be ignored based on the provided file changes, as only a Python source file (`SpinCoating_PINN.py`) was modified and no build artifacts, dependencies, or temporary files were included in the changes.
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Virtual environments
+.venv/
+venv/
+.env
+.env.local
+*.env.*
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Editors
+.vscode/
+.idea/
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Dependency caches
+.mypy_cache/
+.pytest_cache/
+node_modules/
+
+# System files
+.DS_Store
+Thumbs.db
+```

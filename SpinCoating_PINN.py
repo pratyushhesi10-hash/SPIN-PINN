@@ -178,6 +178,8 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False):
             tc = torch.tensor(r["tau_c"], dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
             res, _, _ = residual(h_nets[i], psi, e, tc, r["w"])
             Lp = Lp + torch.mean(res ** 2)
+        nrun = len(data["runs"])        # make the data/physics balance run-count-invariant
+        Ld = Ld / nrun; Lp = Lp / nrun
         loss = w_d * Ld + w_p * Lp; loss.backward(); opt.step()
         hist["d"].append(Ld.item()); hist["p"].append(Lp.item()); hist["t"].append(loss.item())
         if ep % 20 == 0 or ep == epochs - 1:
