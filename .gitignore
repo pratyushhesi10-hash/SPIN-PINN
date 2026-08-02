@@ -1,1 +1,4 @@
-Nothing should be ignored based on the provided file changes. The only modified file is `SpinCoating_PINN.py`, which appears to be a source code file and should not be ignored. There are no build artifacts, dependencies, temporary files, or other items that require ignoring in the provided change list.
+```
+__pycache__/
+*.pyc
+```
