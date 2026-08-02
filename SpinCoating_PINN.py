@@ -204,6 +204,30 @@ def evaluate(nets, data):
         hs = [n(t, 1.0).numpy().flatten() for n in nets["h_nets"]]
     return dict(psi=psi, e=e, hs=hs, Ks=[(r["w"]**2)*psi for r in data["runs"]])
 
+def algebraic_split(h_nets, w0, w1, tau_d):
+    """Hybrid recovery: PINN denoises h; the Psi/E split is solved directly.
+    At each tau, the two runs give  w_i^2 h_i^3 Psi + E = -dh_i/dtau,
+    a 2x2 system in (Psi, E). Determinant D = w0^2 h0^3 - w1^2 h1^3 is the
+    two-run leverage: where |D|->0 the split is undefined (masked to NaN),
+    so the returned curve literally ends where the information ends."""
+    tau_d = np.asarray(tau_d, dtype=float)
+    h, dh = [], []
+    for net in h_nets[:2]:
+        tg = torch.tensor(tau_d, dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
+        hv = net(tg, 1.0)
+        ghv = torch.autograd.grad(hv, tg, grad_outputs=torch.ones_like(hv),
+                                  create_graph=False)[0]
+        h.append(hv.detach().numpy().ravel())
+        dh.append(ghv.detach().numpy().ravel())
+    h0, h1 = h; g0, g1 = dh
+    D = (w0 ** 2) * h0 ** 3 - (w1 ** 2) * h1 ** 3
+    thr = 0.05 * abs(float(D[0])) if len(D) and abs(float(D[0])) > 0 else 1e-6
+    Psi = (g1 - g0) / D
+    E = (-(w0 ** 2) * h0 ** 3 * g1 + (w1 ** 2) * h1 ** 3 * g0) / D
+    mask = (np.abs(D) > thr) & (np.abs(Psi) < 10) & (np.abs(E) < 10)   # drop horizon spikes
+    Psi = np.where(mask, Psi, np.nan); E = np.where(mask, E, np.nan)
+    return dict(tau=tau_d, Psi=Psi, E=E, D=D, thr=thr)
+
 # ─────────────────────────── Plot helper (base) ───────────────────────────
 plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none",
                      "axes.edgecolor": "#4fc3f7", "axes.labelcolor": "#e0e0e0",
@@ -382,6 +406,32 @@ with tb[3]:
                 a.plot(d["tau"], cp, color=[CY, AM][i % 2], lw=2, ls="--", label=f"pred run{i}")
             a.set_xlabel("τ"); a.set_ylabel("Kh³+E"); a.legend(frameon=False, fontsize=8); ax0(a)
             a.set_title("Combined ODE term (the identifiable part)"); st.pyplot(f)
+
+        # ── Algebraic 2×2 split (hybrid recovery) ───────────────────────
+        if n >= 2:
+            st.markdown("#### Algebraic 2×2 split (hybrid recovery)")
+            st.caption("PINN denoises h; autograd reads dh/dτ at machine precision; the Ψ/E split is solved pointwise from the two runs. Where the leverage D = w₀²ĥ₀³ − w₁²ĥ₁³ collapses (late τ) or the solve spikes, values are masked to NaN so the curve ends at the information horizon.")
+            w0, w1 = d["runs"][0]["w"], d["runs"][1]["w"]
+            alg = algebraic_split(st.session_state.nets["h_nets"], w0, w1, d["tau"])
+            ac1, ac2 = st.columns(2)
+            with ac1:
+                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+                a.plot(alg["tau"], alg["Psi"], color=CY, lw=2.4, label="Ψ (algebraic)")
+                a.axhline(y=0, color="#555", lw=0.5, alpha=0.5)
+                a.set_xlabel("τ"); a.set_ylabel("Ψ"); a.legend(frameon=False, fontsize=8); ax0(a)
+                a.set_title(f"Algebraic Ψ (D threshold = {alg['thr']:.3e})"); st.pyplot(f)
+            with ac2:
+                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+                a.plot(alg["tau"], alg["E"], color=AM, lw=2.4, label="Ẽ (algebraic)")
+                a.axhline(y=0, color="#555", lw=0.5, alpha=0.5)
+                a.set_xlabel("τ"); a.set_ylabel("Ẽ"); a.legend(frameon=False, fontsize=8); ax0(a)
+                a.set_title(f"Algebraic Ẽ (D threshold = {alg['thr']:.3e})"); st.pyplot(f)
+            # leverage diagnostic
+            fd, ad = plt.subplots(figsize=(6, 2.4), facecolor="none")
+            ad.plot(alg["tau"], alg["D"], color="#9c88ff", lw=2, label="D = w₀²ĥ₀³ − w₁²ĥ₁³")
+            ad.axhline(y=alg["thr"], color="#ff7675", lw=1.5, ls="--", label=f"threshold ({alg['thr']:.3e})")
+            ad.set_xlabel("τ"); ad.set_ylabel("D"); ad.legend(frameon=False, fontsize=8); ax0(ad)
+            ad.set_title("Two-run leverage (where |D|→0 the split is undefined)"); st.pyplot(fd)
 
         if not truth:
                 import copy
