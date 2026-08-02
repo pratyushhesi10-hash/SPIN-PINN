@@ -294,6 +294,7 @@ with st.sidebar.expander("Training", expanded=True):
     lay = st.slider("Hidden layers", 2, 5, 3)
     w_d = st.slider("W_data", 0.1, 5.0, 1.0, 0.1)
     w_p = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1)
+    param_psi = st.checkbox("Use parameterized Ψ (PsiPar)", value=False)
     mono_w = st.slider("Ψ monotonicity weight (enforce decay)", 0.0, 1.0, 0.0, 0.05)
     reweight_h3 = st.checkbox("Re-weight physics loss by 1/h³", value=False)
 
