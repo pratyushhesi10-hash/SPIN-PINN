@@ -8,25 +8,26 @@ import streamlit as st
 
 # Palette reference — reuse these anywhere you build custom
 # charts (Plotly/Matplotlib) so everything matches exactly.
-CHARCOAL = "#4A4A4A"
-LIGHT_GRAY = "#CBCBCB"
-CREAM = "#FFFFE3"
-SLATE = "#6D8196"
+CHARCOAL = "#1A202C"
+LIGHT_GRAY = "#E2E8F0"
+CREAM = "#FFFFFF"
+SLATE = "#4A5568"
+BLUE = "#3182CE"
 
 
 def load_css():
     st.markdown(
         f"""
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
         html, body, [class*="css"] {{
             font-family: 'Inter', sans-serif !important;
         }}
 
-        /* Force the whole app surface — kills any leftover dark background */
+        /* Clean Light Background */
         .stApp {{
-            background-color: {CREAM} !important;
+            background: linear-gradient(180deg, #FAFBFC 0%, #F5F7FA 100%) !important;
             color: {CHARCOAL} !important;
         }}
 
@@ -45,7 +46,7 @@ def load_css():
 
         /* Numbers / equations / code look sharper in mono */
         code, .stMarkdown code {{
-            font-family: 'IBM Plex Mono', monospace;
+            font-family: 'JetBrains Mono', monospace;
             background-color: {LIGHT_GRAY}55 !important;
             color: {CHARCOAL} !important;
             border-radius: 4px;
@@ -59,12 +60,12 @@ def load_css():
         .block-container {{
             padding-top: 2rem;
             padding-bottom: 2rem;
-            max-width: 1150px;
+            max-width: 1200px;
         }}
 
         /* Sidebar */
         section[data-testid="stSidebar"] {{
-            background-color: {LIGHT_GRAY}55 !important;
+            background-color: {CREAM} !important;
             border-right: 1px solid {LIGHT_GRAY};
         }}
         section[data-testid="stSidebar"] * {{
@@ -75,16 +76,13 @@ def load_css():
         div[data-testid="stSlider"] {{
             margin-bottom: 1.4rem;
         }}
-        /* Catch-all: force every bit of text inside a slider widget to be readable */
         div[data-testid="stSlider"] * {{
             color: {CHARCOAL} !important;
         }}
-        /* Slider track fill */
         div[data-testid="stSlider"] [role="slider"] {{
-            background-color: {SLATE} !important;
-            border-color: {SLATE} !important;
+            background-color: {BLUE} !important;
+            border-color: {BLUE} !important;
         }}
-        /* The floating current-value label above the handle — bump contrast */
         div[data-testid="stSliderThumbValue"],
         div[data-testid="stThumbValue"] {{
             color: {CHARCOAL} !important;
@@ -93,66 +91,79 @@ def load_css():
             border-radius: 4px;
             padding: 0 4px;
         }}
-        /* Slider widget label above the whole control */
         div[data-testid="stSlider"] label p {{
             color: {CHARCOAL} !important;
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 0.9rem;
         }}
 
         /* Buttons */
         .stButton > button {{
             border-radius: 8px;
-            border: 1px solid {SLATE};
-            background-color: transparent;
+            border: 1px solid {LIGHT_GRAY};
+            background-color: {CREAM};
             color: {SLATE} !important;
-            font-weight: 500;
-            padding: 0.5rem 1.4rem;
-            transition: all 0.15s ease;
+            font-weight: 600;
+            font-size: 0.9rem;
+            padding: 10px 20px;
+            transition: all 0.2s ease;
         }}
         .stButton > button:hover {{
-            background-color: {SLATE};
+            background-color: {BLUE};
+            border-color: {BLUE};
             color: {CREAM} !important;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(49, 130, 206, 0.2);
         }}
 
         /* Metric cards */
         div[data-testid="stMetric"] {{
-            background-color: #FFFFFF !important;
+            background-color: {CREAM} !important;
             border: 1px solid {LIGHT_GRAY};
-            border-radius: 10px;
-            padding: 1rem;
+            border-radius: 12px;
+            padding: 16px 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            transition: all 0.2s ease;
+        }}
+        div[data-testid="stMetric"]:hover {{
+            border-color: {SLATE};
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            transform: translateY(-2px);
         }}
 
         /* Tabs */
         button[data-baseweb="tab"] p {{
-            font-weight: 500;
-            color: {CHARCOAL}99 !important;
-        }}
-        button[data-baseweb="tab"][aria-selected="true"] p {{
+            font-weight: 600;
             color: {SLATE} !important;
         }}
+        button[data-baseweb="tab"][aria-selected="true"] p {{
+            color: {BLUE} !important;
+        }}
         div[data-baseweb="tab-highlight"] {{
-            background-color: {SLATE} !important;
+            background-color: {BLUE} !important;
         }}
         div[data-baseweb="tab-border"] {{
             background-color: {LIGHT_GRAY} !important;
         }}
 
-        /* Custom badge/chip helper — use with st.markdown(..., unsafe_allow_html=True) */
+        /* Custom badge/chip helper */
         .chip {{
             display: inline-block;
-            padding: 6px 14px;
-            border-radius: 6px;
-            border: 1px solid {SLATE}55;
-            background: {SLATE}11;
+            padding: 6px 12px;
+            border-radius: 999px;
+            border: 1px solid {LIGHT_GRAY};
+            background: {CREAM};
             color: {SLATE} !important;
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 0.85rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
             margin-right: 8px;
+            font-weight: 500;
+            transition: all 0.2s ease;
         }}
         .chip.accent {{
-            border-color: {SLATE};
-            background: {SLATE};
-            color: {CREAM} !important;
+            border-color: {BLUE};
+            background: #EBF8FF;
+            color: {BLUE} !important;
         }}
         </style>
         """,
@@ -184,7 +195,7 @@ def style_matplotlib():
         "xtick.color": CHARCOAL,
         "ytick.color": CHARCOAL,
 
-        "axes.edgecolor": CHARCOAL,
+        "axes.edgecolor": LIGHT_GRAY,
         "axes.grid": True,
         "grid.color": LIGHT_GRAY,
         "grid.alpha": 0.6,
