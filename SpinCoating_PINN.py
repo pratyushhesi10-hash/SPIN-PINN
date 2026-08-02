@@ -234,7 +234,7 @@ plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none",
                      "text.color": "#e0e0e0", "axes.grid": True, "grid.color": "#2d3748",
                      "axes.spines.top": False, "axes.spines.right": False,
                      "font.family": "Calibri"})
-CY, AM = "#4fc3f7", "#ffb74d"
+CY, AM, RD = "#4fc3f7", "#ffb74d", "#ef5350"
 def ax0(a): a.tick_params(colors="#b0bec5"); a.grid(alpha=.3); return a
 
 # ─────────────────────────── Sidebar ───────────────────────────
@@ -407,31 +407,68 @@ with tb[3]:
             a.set_xlabel("τ"); a.set_ylabel("Kh³+E"); a.legend(frameon=False, fontsize=8); ax0(a)
             a.set_title("Combined ODE term (the identifiable part)"); st.pyplot(f)
 
-        # ── Algebraic 2×2 split (hybrid recovery) ───────────────────────
+        # ---- algebraic hybrid recovery + information-horizon leverage (ideas 2 & 1) ----
+        tau_d = np.asarray(d["tau"], dtype=float)
+        st.markdown("**Algebraic (hybrid) recovery** — Ψ, Ẽ solved pointwise from the two "
+                    "smoothed thickness curves (the PINN denoises; the split is a direct solve, "
+                    "so no mirror image). The curve ends where the two-run leverage vanishes.")
+        w0 = d["runs"][0]["w"]; w1 = d["runs"][1]["w"] if n >= 2 else w0
+        alg = None
         if n >= 2:
-            st.markdown("#### Algebraic 2×2 split (hybrid recovery)")
-            st.caption("PINN denoises h; autograd reads dh/dτ at machine precision; the Ψ/E split is solved pointwise from the two runs. Where the leverage D = w₀²ĥ₀³ − w₁²ĥ₁³ collapses (late τ) or the solve spikes, values are masked to NaN so the curve ends at the information horizon.")
-            w0, w1 = d["runs"][0]["w"], d["runs"][1]["w"]
-            alg = algebraic_split(st.session_state.nets["h_nets"], w0, w1, d["tau"])
-            ac1, ac2 = st.columns(2)
-            with ac1:
-                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-                a.plot(alg["tau"], alg["Psi"], color=CY, lw=2.4, label="Ψ (algebraic)")
-                a.axhline(y=0, color="#555", lw=0.5, alpha=0.5)
-                a.set_xlabel("τ"); a.set_ylabel("Ψ"); a.legend(frameon=False, fontsize=8); ax0(a)
-                a.set_title(f"Algebraic Ψ (D threshold = {alg['thr']:.3e})"); st.pyplot(f)
-            with ac2:
-                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-                a.plot(alg["tau"], alg["E"], color=AM, lw=2.4, label="Ẽ (algebraic)")
-                a.axhline(y=0, color="#555", lw=0.5, alpha=0.5)
-                a.set_xlabel("τ"); a.set_ylabel("Ẽ"); a.legend(frameon=False, fontsize=8); ax0(a)
-                a.set_title(f"Algebraic Ẽ (D threshold = {alg['thr']:.3e})"); st.pyplot(f)
-            # leverage diagnostic
-            fd, ad = plt.subplots(figsize=(6, 2.4), facecolor="none")
-            ad.plot(alg["tau"], alg["D"], color="#9c88ff", lw=2, label="D = w₀²ĥ₀³ − w₁²ĥ₁³")
-            ad.axhline(y=alg["thr"], color="#ff7675", lw=1.5, ls="--", label=f"threshold ({alg['thr']:.3e})")
-            ad.set_xlabel("τ"); ad.set_ylabel("D"); ad.legend(frameon=False, fontsize=8); ax0(ad)
-            ad.set_title("Two-run leverage (where |D|→0 the split is undefined)"); st.pyplot(fd)
+            try:
+                alg = algebraic_split(st.session_state.nets["h_nets"], w0, w1, tau_d)
+            except Exception as ex:
+                st.warning("algebraic split failed: %r" % ex)
+        if alg is not None:
+            ca1, ca2 = st.columns(2)
+            with ca1:
+                f, a = plt.subplots(figsize=(6, 3.4), facecolor="none")
+                if truth:
+                    a.plot(tau_d, d["psi"], color=CY, lw=2.4, label="true Ψ")
+                a.plot(alg["tau"], alg["Psi"], "--", color=RD if not truth else AM, lw=2,
+                       label="algebraic Ψ")
+                a.set_ylim(-0.5, max(2.0, np.nanmax(np.abs(alg["Psi"])) * 1.1))
+                a.set_title("Ψ from direct 2x2 solve"); a.legend(frameon=False, fontsize=8)
+                a.set_xlabel("τ"); ax0(a); st.pyplot(f)
+            with ca2:
+                f, a = plt.subplots(figsize=(6, 3.4), facecolor="none")
+                if truth:
+                    a.plot(tau_d, d["e"], color=CY, lw=2.4, label="true Ẽ")
+                a.plot(alg["tau"], alg["E"], "--", color=RD if not truth else AM, lw=2,
+                       label="algebraic Ẽ")
+                a.set_title("Ẽ from direct 2x2 solve"); a.legend(frameon=False, fontsize=8)
+                a.set_xlabel("τ"); ax0(a); st.pyplot(f)
+            if truth:
+                early = tau_d < 0.2
+                m_e = early & ~np.isnan(alg["Psi"])
+                m_f = ~np.isnan(alg["Psi"])
+                e_err = rel(alg["Psi"][m_e], d["psi"][m_e]) if m_e.any() else float("nan")
+                f_err = rel(alg["Psi"][m_f], d["psi"][m_f]) if m_f.any() else float("nan")
+                st.caption("Algebraic Ψ — early window (τ<0.2) err **%.1f%%** vs full-domain "
+                           "**%.1f%%**. The gap is the information horizon made visible: the direct "
+                           "solve is accurate where leverage exists and *undefined* (masked) where it "
+                           "doesn't. Notice there is no mirror image — this is a solve, not gradient "
+                           "descent, so the Layer-1 amplitude/shape pathology is gone; only the "
+                           "Layer-2 decay (late window) stays out of reach." % (e_err, f_err))
+            else:
+                st.caption("Direct solve of Ψ, Ẽ implied by your two curves. Where |D|≈0 (late τ) "
+                           "the split is masked. If the consistency FLAG is up, this curve need not be "
+                           "physical (negative / non-decaying) — that *is* the inconsistency drawn as a "
+                           "line, which is the point.")
+            # leverage / horizon plot (works in both modes; from the recovered h)
+            h0r, h1r = r["hs"][0], r["hs"][1]
+            Dlev = np.abs((w0 ** 2) * h0r ** 3 - (w1 ** 2) * h1r ** 3)
+            tot = float(np.trapezoid(Dlev, tau_d)); e2 = tau_d < 0.2
+            frac = float(np.trapezoid(Dlev[e2], tau_d[e2]) / tot) if tot > 0 else float("nan")
+            f, a = plt.subplots(figsize=(7, 3.2), facecolor="none")
+            a.plot(tau_d, Dlev, color="#cbd5e1", lw=2)
+            a.axvline(0.2, color=RD, ls=":")
+            a.set_title("Two-run leverage c(τ)=|w0²h0³−w1²h1³| · %.0f%% lives in τ<0.2"
+                        % (100 * frac)); a.set_xlabel("τ"); ax0(a); st.pyplot(f)
+            st.caption("This is the experimental-design map (idea 1): the red line at τ=0.2 bounds "
+                       "the region that carries almost all the viscosity information. Sampling densely "
+                       "left of that line — not evenly across [0,1] — is the only thing that can pull "
+                       "the decay rate back into reach.")
 
         if not truth:
                 import copy
