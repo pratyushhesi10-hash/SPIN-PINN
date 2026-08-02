@@ -53,6 +53,15 @@ class PsiNet(nn.Module):
         self.net = nn.Sequential(*L_)
     def forward(self, tau): return torch.exp(self.net(tau))
 
+class PsiPar(nn.Module):   # constrained Psi = A*exp(-d*tau), d>=0 (paper §4.4)
+    def __init__(self):
+        super().__init__()
+        self.logA = nn.Parameter(torch.tensor(0.0))
+        self.raw  = nn.Parameter(torch.tensor(0.5))
+        self.sp   = nn.Softplus()
+    def forward(self, t):               # same call signature as PsiNet -> residual() unchanged
+        return torch.exp(self.logA - self.sp(self.raw) * t)
+
 class ETildeNet(nn.Module):
     def __init__(self, h=32, L=3):
         super().__init__()
@@ -153,10 +162,11 @@ def _build_manual(rows, h_wet, t_ref, default_rpm):
                 manual_meta=dict(h_wet=float(h_wet), t_ref=float(t_ref), rpm_ref=rpm_ref))
 
 # ─────────────────────────── Training / eval (base; .index -> enumerate) ───────────────────────────
-def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph):
+def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False):
     torch.manual_seed(seed)
     h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
-    psi, e = PsiNet(h, L), ETildeNet(h, L)
+    psi = PsiPar() if param_psi else PsiNet(h, L)
+    e = ETildeNet(h, L)
     p = [p for n in h_nets for p in n.parameters()] + list(psi.parameters()) + list(e.parameters())
     opt = optim.Adam(p, lr=lr); hist = dict(d=[], p=[], t=[])
     for ep in range(epochs):
