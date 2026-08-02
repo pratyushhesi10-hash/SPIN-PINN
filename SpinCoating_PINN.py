@@ -171,7 +171,7 @@ def _build_manual(rows, h_wet, t_ref, default_rpm):
                 manual_meta=dict(h_wet=float(h_wet), t_ref=float(t_ref), rpm_ref=rpm_ref))
 
 # ─────────────────────────── Training / eval (base; .index -> enumerate) ───────────────────────────
-def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mono_w=0.0):
+def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mono_w=0.0, reweight_h3=False):
     torch.manual_seed(seed)
     h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
     psi = PsiPar() if param_psi else PsiNet(h, L)
@@ -185,8 +185,13 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
             hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
             Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd) ** 2)
             tc = torch.tensor(r["tau_c"], dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
-            res, _, _ = residual(h_nets[i], psi, e, tc, r["w"])
-            Lp = Lp + torch.mean(res ** 2)
+            res, hh, _ = residual(h_nets[i], psi, e, tc, r["w"])
+            if reweight_h3:
+                wgt = 1.0 / (hh.detach() ** 3 + 1e-3)
+                wgt = wgt / wgt.mean()      # mean-normalize: rebalance points, don't rescale the loss
+                Lp = Lp + torch.mean((wgt * res) ** 2)
+            else:
+                Lp = Lp + torch.mean(res ** 2)
             if mono_w > 0.0:                # enforce NON-INCREASING Psi (matches decaying ground truth)
                 pt = psi(tc); dpt = torch.autograd.grad(pt.sum(), tc, create_graph=True, retain_graph=True)[0]
                 Lmono = Lmono + torch.mean(torch.relu(dpt)) ** 2     # penalize dPsi/dtau > 0
@@ -290,6 +295,7 @@ with st.sidebar.expander("Training", expanded=True):
     w_d = st.slider("W_data", 0.1, 5.0, 1.0, 0.1)
     w_p = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1)
     mono_w = st.slider("Ψ monotonicity weight (enforce decay)", 0.0, 1.0, 0.0, 0.05)
+    reweight_h3 = st.checkbox("Re-weight physics loss by 1/h³", value=False)
 
 st.sidebar.markdown("---")
 if SRC_SYN:
@@ -371,7 +377,7 @@ with tb[2]:
             st.stop()
         prog = st.progress(0); ph = st.empty()
         st.session_state.nets, st.session_state.hist = train(
-            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w)
+            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3)
         st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
