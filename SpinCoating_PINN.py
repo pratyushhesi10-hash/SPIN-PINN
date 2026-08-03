@@ -661,53 +661,22 @@ with tb[3]:
                        "the decay rate back into reach.")
 
         if not truth:
-                import copy
-                # real per-run h-fit (h_err_for already computed these as he0 / he1)
-                worst = max(he0, he1) if n >= 2 else he0
-                joint = [he0] + ([he1] if n >= 2 else [])
-                # consistency probe: re-fit COPIES of the trained h-nets to the data
-                # with physics OFF. If the data obey the ODE, this ≈ the joint fit;
-                # if they don't, the joint (physics-on) fit is far worse -> FLAG.
-                do_fits = []
-                try:
-                    for i in range(n):
-                        r = d["runs"][i]
-                        td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
-                        hdv = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
-                        cl = copy.deepcopy(st.session_state.nets["h_nets"][i])
-                        opc = optim.Adam(cl.parameters(), lr=1e-3)
-                        for _ in range(250):
-                            opc.zero_grad()
-                            Lc = torch.mean((cl(td, 1.0) - hdv) ** 2); Lc.backward(); opc.step()
-                        with torch.no_grad():
-                            pred = cl(td, 1.0).numpy().ravel(); targ = hdv.numpy().ravel()
-                            do_fits.append(float(np.mean(np.abs(pred - targ) / (np.abs(targ) + 1e-8)) * 100))
-                except Exception:
-                    do_fits = []
-                # ---- build the honest verdict ----
-                bad = warn = False; cons = ""
-                if do_fits and len(do_fits) == len(joint):
-                    iw = int(np.argmax(joint))
-                    ratio = joint[iw] / max(do_fits[iw], 1e-6)
-                    if joint[iw] > 40 and ratio > 3:
-                        bad = True
-                        cons = ("FLAG — physics made the fit %.1fx worse (joint %.0f%% vs data-only %.0f%%): "
-                                "these runs are NOT consistent with the spin-coating ODE" % (ratio, joint[iw], do_fits[iw]))
-                    elif joint[iw] > 20 and ratio > 1.8:
-                        warn = True
-                        cons = "WARN — physics strained the fit (joint %.0f%% vs data-only %.0f%%, %.1fx)" % (joint[iw], do_fits[iw], ratio)
-                    else:
-                        cons = "OK — data consistent with the ODE (joint %.0f%% ~ data-only %.0f%%)" % (joint[iw], do_fits[iw])
-                else:
-                    cons = "consistency probe unavailable"
-                if worst < 15:   hline = "h: HIGH — tracks the data (worst run %.1f%%)" % worst
-                elif worst < 40: hline = "h: MEDIUM — only loosely on the data (worst run %.1f%%)" % worst
-                else:            hline = "h: LOW — physics pulled h OFF the data (worst run %.1f%%): the ODE cannot reproduce these traces" % worst
-                eline   = "E: LOW — derived from a mis-fit h" if (bad or worst >= 40) else "E: MEDIUM-HIGH — slope of h"
-                cline   = "combined: COMPROMISE — physics & data disagree, the split is suspect" if (bad or worst >= 40) else "combined: HIGH — what the physics loss pins"
-                lines = [hline, "consistency: " + cons, eline, cline,
-                         "note: no hidden Ψ/E to grade; the Ψ plot here is the UNCONSTRAINED net (a diagnostic) — treat Ψ with extra caution.",
-                         "identifiability: K̃ and Ẽ trade off — the combined term K̃ĥ³+Ẽ is what the data pins."]
+                # real per-run h-fit errors
+                h_errs = [h_err_for(0)[0]] + ([h_err_for(1)[0]] if len(runs) > 1 else [])
+                worst = float(max(h_errs))
+                # consistency probe: joint-trained data-loss vs data-only refit
+                cons_ratio = consistency_probe(param, runs)
+                v, arel, drel, note, level = verdict(ms, hor, h_errs=h_errs, cons_ratio=cons_ratio)
+                bad = (level == 'bad')
+                warn = (level == 'warn')
+                lines = [
+                    v['h'],
+                    \"consistency: \" + v['consistency'],
+                    v['E'],
+                    v['combined'],
+                    \"note: \" + note,
+                    \"identifiability: K̃ and Ẽ trade off — the combined term K̃ĥ³+Ẽ is what the data pins.\"
+                ]
                 msg = "\n\n".join("• " + x for x in lines)
                 if bad:            st.error("🚨 Trust verdict (computed from the real h-fit)\n\n" + msg)
                 elif warn or worst >= 15: st.warning("⚠️ Trust verdict (computed from the real h-fit)\n\n" + msg)
