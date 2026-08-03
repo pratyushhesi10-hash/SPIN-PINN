@@ -333,6 +333,20 @@ with st.sidebar.expander("Training", expanded=True):
     mono_w = st.slider("Ψ monotonicity weight (enforce decay)", 0.0, 1.0, 0.0, 0.05)
     reweight_h3 = st.checkbox("Re-weight physics loss by 1/h³", value=False)
 
+with st.sidebar.expander("Ẽ fixing (E correction)"):
+    e_mode = st.radio("Ẽ mode", ["Free (learned)", "Fixed: constant", "Fixed: exponential"], index=0)
+    if e_mode != "Free (learned)":
+        if st.button("Auto-fill E_B, E_d from late-time slope"):
+            _runs = (st.session_state.get("data") or {}).get("runs") \
+                 or (st.session_state.get("manual") or {}).get("runs")
+            if _runs:
+                st.session_state["E_B_fix"], st.session_state["E_d_fix"] = estimate_E_late(_runs)
+        E_B_fix = st.number_input("E_B (fixed)", 0.0, 10.0, 3.0, 0.1, key="E_B_fix")
+        E_d_fix = st.number_input("E_d (fixed)", 0.0, 10.0, 3.5, 0.1, key="E_d_fix")
+    fix_E = None
+    if e_mode == "Fixed: constant":    fix_E = FixedE(E_B_fix)
+    if e_mode == "Fixed: exponential": fix_E = FixedEExp(E_B_fix, E_d_fix)
+
 st.sidebar.markdown("---")
 if SRC_SYN:
     gen_btn = st.sidebar.button("Generate data", use_container_width=True, key="gen_btn")
