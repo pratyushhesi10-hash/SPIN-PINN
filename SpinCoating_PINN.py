@@ -49,6 +49,56 @@ def early_biased_times(n_meas, early_frac=0.5, early_end=0.2):
         t += [float(np.random.uniform(lb[i], lb[i + 1])) for i in range(n_late)]
     return np.sort(np.asarray(t))
 
+
+def verdict(ms, hor, h_errs=None, cons_ratio=None):
+    A = np.array([a for a, _ in ms]); d = np.array([b for _, b in ms])
+    arel = np.std(A) / max(abs(np.median(A)), 1e-6)
+    drel = np.std(d) / max(abs(np.median(d)), 1e-6)
+    v = {}
+
+    # --- h: read the ACTUAL per-run h-fit, never assume ---
+    if h_errs is None or len(h_errs) == 0:
+        v['h'] = 'HIGH — fit to data by construction'; h_ok = True
+    else:
+        worst = float(max(h_errs))
+        if worst < 15:
+            v['h'] = 'HIGH — h tracks the data (worst run %.1f%%)' % worst; h_ok = True
+        elif worst < 40:
+            v['h'] = 'MEDIUM — physics bent h off the data (worst run %.1f%%)' % worst; h_ok = False
+        else:
+            v['h'] = ('LOW — physics dragged h OFF the data (worst run %.1f%%): '
+                      'the ODE cannot reproduce these traces' % worst); h_ok = False
+
+    # --- consistency: joint-trained data-loss vs data-only refit data-loss ---
+    if cons_ratio is None:
+        v['consistency'] = 'consistency not measured'; cons_bad = False
+    elif cons_ratio > 3.0:
+        v['consistency'] = ('FLAG — joint data-loss %.1fx the data-only fit: the ODE is '
+                            'fighting the data (runs inconsistent with the ODE)' % cons_ratio)
+        cons_bad = True
+    elif cons_ratio > 1.5:
+        v['consistency'] = 'WARN — joint data-loss %.1fx data-only: mild physics/data tension' % cons_ratio
+        cons_bad = False
+    else:
+        v['consistency'] = 'OK — joint data-loss %.1fx data-only: physics and data agree' % cons_ratio
+        cons_bad = False
+
+    # --- the rest, adjusted by the two new signals ---
+    v['E'] = 'LOW — derived from a mis-fit h' if (not h_ok) else 'MEDIUM-HIGH — slope of h'
+    v['combined'] = ('COMPROMISE — physics & data disagree, split is suspect' if (cons_bad or not h_ok)
+                     else 'HIGH — what the physics loss pins')
+    v['Psi amplitude'] = ('MEDIUM (reproducible across restarts)' if arel < 0.3
+                          else 'LOW (multi-start spread large)')
+    v['Psi decay'] = ('UNIDENTIFIABLE — a prior-driven extrapolation, NOT a measurement'
+                      if drel > 0.5 else 'LOW-MEDIUM (treat cautiously)')
+    note = ('Information horizon: %.0f%% of the 2-run Psi leverage sits in tau<0.2.' % (100 * hor['frac_early'])
+            if hor else 'Single run -> no multi-run lever on Psi.')
+
+    bad = cons_bad or (h_errs is not None and len(h_errs) and float(max(h_errs)) > 50)
+    warn = (not bad) and ((not h_ok) or cons_bad or drel > 0.5)
+    level = 'bad' if bad else ('warn' if warn else 'ok')
+    return v, arel, drel, note, level
+
 # ─────────────────────────── Page & theme ───────────────────────────
 
 st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🧪", layout="wide")
