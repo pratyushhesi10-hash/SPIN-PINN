@@ -257,6 +257,22 @@ def simulate(psi_A, psi_d, E_B, E_d, w, tau):
     return solve_ivp(rhs, (0, 1), [1.0], t_eval=tau, method="RK45").y[0]
 
 @st.cache_data
+# ─────────────────────────── Dense-early sampling helper ───────────────────────────
+def _sample_tau(n_meas, dense_early, early_frac, early_span, rng):
+    """Stratified sample times; optionally concentrate a fraction of the points
+    in the early window [0, early_span] where the viscosity signal lives."""
+    if not dense_early:                                   # unchanged default
+        edges = np.linspace(0.0, 1.0, n_meas + 1)
+        return np.array([rng.uniform(edges[i], edges[i + 1]) for i in range(n_meas)])
+    n_e = max(1, int(round(early_frac * n_meas)))
+    n_l = max(1, n_meas - n_e)
+    pts = []
+    ee = np.linspace(0.0, early_span, n_e + 1)            # dense early block
+    pts += [rng.uniform(ee[i], ee[i + 1]) for i in range(n_e)]
+    le = np.linspace(early_span, 1.0, n_l + 1)            # remainder covers the tail
+    pts += [rng.uniform(le[i], le[i + 1]) for i in range(n_l)]
+    return np.array(pts)
+
 def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed, early_frac=0.5, early_end=0.2):
     rng = np.random.default_rng(seed); torch.manual_seed(seed)
     tau = np.linspace(0, 1, 500); w_ref = rpm_a
