@@ -1,6 +1,7 @@
 # app.py — SpinCoat PINN Lab  (+ Manual / CSV data tab)
 # Run:  streamlit run app.py
 import io, csv
+import copy
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -98,6 +99,38 @@ def verdict(ms, hor, h_errs=None, cons_ratio=None):
     warn = (not bad) and ((not h_ok) or cons_bad or drel > 0.5)
     level = 'bad' if bad else ('warn' if warn else 'ok')
     return v, arel, drel, note, level
+
+
+def consistency_probe(param, runs, steps=300, lr=1e-3):
+    """Post-hoc consistency probe. Compares the data-loss of the JOINT-trained h_nets
+    against a short DATA-ONLY refit of the same h_nets (psi/en frozen, copy discarded).
+    If a data-only refit drops the data loss a lot, the joint solution was being pulled
+    OFF the data by the physics term -> the runs are inconsistent with the ODE.
+    Returns ratio = joint_loss / refit_loss (>=1), or None on failure."""
+    import torch.optim as optim
+    hn = param['hn']
+
+    def dloss(nets):
+        tot = 0.0
+        for i, r in enumerate(runs):
+            tot += torch.mean((nets[i](r['td'], 1.0) - r['hd']) ** 2).item()
+        return tot / len(runs)
+
+    with torch.no_grad():
+        joint = dloss(hn)
+    refit = [copy.deepcopy(h) for h in hn]
+    o = optim.Adam([p for h in refit for p in h.parameters()], lr=lr)
+    for _ in range(steps):
+        o.zero_grad()
+        L = sum(torch.mean((refit[i](runs[i]['td'], 1.0) - runs[i]['hd']) ** 2)
+                for i in range(len(runs)))
+        L.backward(); o.step()
+    with torch.no_grad():
+        refit_loss = dloss(refit)
+    if refit_loss <= 1e-10:
+        return None
+    return joint / refit_loss
+
 
 # ─────────────────────────── Page & theme ───────────────────────────
 
