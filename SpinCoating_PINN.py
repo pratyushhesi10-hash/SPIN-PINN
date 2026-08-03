@@ -900,7 +900,8 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
         loss.backward(); opt.step()
         if prog is not None and ep % 50 == 0: prog.progress((ep+1)/epochs)
         if ph is not None and ep % 50 == 0:
-            ph.caption(f"{tag} · epoch {ep+1}/{epochs} · Ld {Ld.item():.4f} · Lp {Lp.item():.4f} · Lm {Lm.item():.4f}")
+            lmv = Lm.item() if isinstance(Lm, torch.Tensor) else Lm
+            ph.caption(f"{tag} · epoch {ep+1}/{epochs} · Ld {Ld.item():.4f} · Lp {Lp.item():.4f} · Lm {lmv:.4f}")
     return dict(h_nets=h_nets, psi=psi, e=e_net), time.time()-t0
 
 def sweep_metrics(nets, data):
