@@ -273,17 +273,18 @@ def _sample_tau(n_meas, dense_early, early_frac, early_span, rng):
     pts += [rng.uniform(le[i], le[i + 1]) for i in range(n_l)]
     return np.array(pts)
 
-def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed, early_frac=0.5, early_end=0.2):
+@st.cache_data
+def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed,
+                  dense_early=False, early_frac=0.5, early_span=0.2):
     rng = np.random.default_rng(seed); torch.manual_seed(seed)
     tau = np.linspace(0, 1, 500); w_ref = rpm_a
     runs, K_true = [], []
-    # Use stratified early-biased sampling
-    tau_meas = early_biased_times(n_meas, early_frac=early_frac, early_end=early_end)
     for rpm in (rpm_a, rpm_b):
         w = rpm / w_ref
         h = simulate(psi_A, psi_d, E_B, E_d, w, tau)
         K_true.append((w**2) * psi_A*np.exp(-psi_d*tau))
-        idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tau_meas]))
+        tgt = _sample_tau(n_meas, dense_early, early_frac, early_span, rng)
+        idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tgt]))
         h_s = h[idx]; meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
         runs.append(dict(rpm=rpm, w=w, h=h, tau_s=tau[idx], h_meas=meas,
                          tau_c=np.sort(rng.uniform(0, 1, n_colloc))))
