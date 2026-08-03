@@ -51,52 +51,58 @@ def early_biased_times(n_meas, early_frac=0.5, early_end=0.2):
     return np.sort(np.asarray(t))
 
 
-def verdict(ms, hor, h_errs=None, cons_ratio=None):
-    A = np.array([a for a, _ in ms]); d = np.array([b for _, b in ms])
-    arel = np.std(A) / max(abs(np.median(A)), 1e-6)
-    drel = np.std(d) / max(abs(np.median(d)), 1e-6)
+def verdict(ms, hor, fit_errs=None, Ld_A=None, Ld_C=None):
+    def _num(x): return isinstance(x, float) and x == x
     v = {}
-
-    # --- h: read the ACTUAL per-run h-fit, never assume ---
-    if h_errs is None or len(h_errs) == 0:
-        v['h'] = 'HIGH — fit to data by construction'; h_ok = True
+    if ms is not None and len(ms) > 0:
+        A = np.array([a for a, _ in ms]); d = np.array([b for _, b in ms])
+        arel = float(np.std(A) / max(abs(np.median(A)), 1e-6))
+        drel = float(np.std(d) / max(abs(np.median(d)), 1e-6))
     else:
-        worst = float(max(h_errs))
-        if worst < 15:
-            v['h'] = 'HIGH — h tracks the data (worst run %.1f%%)' % worst; h_ok = True
-        elif worst < 40:
-            v['h'] = 'MEDIUM — physics bent h off the data (worst run %.1f%%)' % worst; h_ok = False
+        arel = drel = float('nan')
+
+    worst = float(max(fit_errs)) if fit_errs else None
+    if worst is None:
+        v['h'] = 'HIGH — fit to data by construction'; h_bad = False
+    elif worst < 15:
+        v['h'] = 'HIGH — h tracks the data (worst run %.1f%%)' % worst; h_bad = False
+    elif worst < 40:
+        v['h'] = 'MEDIUM — physics bent h off the data (worst run %.1f%%)' % worst; h_bad = True
+    else:
+        v['h'] = ('LOW — physics PULLED h OFF the data (worst run %.1f%%): '
+                  'the ODE cannot reproduce these traces' % worst); h_bad = True
+
+    if Ld_A is not None and Ld_C is not None and Ld_A > 1e-12:
+        ratio = Ld_C / Ld_A
+        if ratio > 5:
+            v['consistency'] = ('FLAG — joint data-loss %.1fx the data-only fit: '
+                                'physics and data disagree' % ratio)
+        elif ratio > 2:
+            v['consistency'] = ('WARN — joint data-loss %.1fx the data-only fit: '
+                                'physics strains the data' % ratio)
         else:
-            v['h'] = ('LOW — physics dragged h OFF the data (worst run %.1f%%): '
-                      'the ODE cannot reproduce these traces' % worst); h_ok = False
-
-    # --- consistency: joint-trained data-loss vs data-only refit data-loss ---
-    if cons_ratio is None:
-        v['consistency'] = 'consistency not measured'; cons_bad = False
-    elif cons_ratio > 3.0:
-        v['consistency'] = ('FLAG — joint data-loss %.1fx the data-only fit: the ODE is '
-                            'fighting the data (runs inconsistent with the ODE)' % cons_ratio)
-        cons_bad = True
-    elif cons_ratio > 1.5:
-        v['consistency'] = 'WARN — joint data-loss %.1fx data-only: mild physics/data tension' % cons_ratio
-        cons_bad = False
+            v['consistency'] = 'OK — data consistent with the ODE (joint %.1fx data-only)' % ratio
     else:
-        v['consistency'] = 'OK — joint data-loss %.1fx data-only: physics and data agree' % cons_ratio
-        cons_bad = False
+        v['consistency'] = 'consistency not measured (retrain to enable)'
 
-    # --- the rest, adjusted by the two new signals ---
-    v['E'] = 'LOW — derived from a mis-fit h' if (not h_ok) else 'MEDIUM-HIGH — slope of h'
-    v['combined'] = ('COMPROMISE — physics & data disagree, split is suspect' if (cons_bad or not h_ok)
-                     else 'HIGH — what the physics loss pins')
-    v['Psi amplitude'] = ('MEDIUM (reproducible across restarts)' if arel < 0.3
-                          else 'LOW (multi-start spread large)')
+    v['E'] = 'LOW — derived from a mis-fit h' if h_bad else 'MEDIUM-HIGH — slope of h'
+    v['combined'] = ('COMPROMISE — physics & data disagree, split is suspect' if h_bad
+                     else ('MEDIUM — combined only loosely pinned'
+                           if (worst is not None and worst >= 15)
+                           else 'HIGH — what the physics loss pins'))
+    v['Psi amplitude'] = ('MEDIUM (reproducible across restarts)' if (_num(arel) and arel < 0.3)
+                          else ('LOW (multi-start spread large)' if _num(arel) else 'n/a'))
     v['Psi decay'] = ('UNIDENTIFIABLE — a prior-driven extrapolation, NOT a measurement'
-                      if drel > 0.5 else 'LOW-MEDIUM (treat cautiously)')
-    note = ('Information horizon: %.0f%% of the 2-run Psi leverage sits in tau<0.2.' % (100 * hor['frac_early'])
-            if hor else 'Single run -> no multi-run lever on Psi.')
+                      if (_num(drel) and drel > 0.5)
+                      else ('LOW-MEDIUM (treat cautiously)' if _num(drel) else 'n/a'))
 
-    bad = cons_bad or (h_errs is not None and len(h_errs) and float(max(h_errs)) > 50)
-    warn = (not bad) and ((not h_ok) or cons_bad or drel > 0.5)
+    note = (("Information horizon: %.0f%% of the 2-run Psi leverage sits in tau<0.2."
+             % (100 * hor['frac_early'])) if hor
+            else "Single run -> no multi-run lever on Psi.")
+
+    bad  = h_bad or (Ld_A is not None and Ld_C is not None and Ld_A > 1e-12 and Ld_C / Ld_A > 5)
+    warn = (not bad) and (h_bad or (_num(drel) and drel > 0.5) or
+                          (Ld_A is not None and Ld_C is not None and Ld_A > 1e-12 and Ld_C / Ld_A > 2))
     level = 'bad' if bad else ('warn' if warn else 'ok')
     return v, arel, drel, note, level
 
@@ -316,11 +322,33 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
     h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
     psi = PsiPar() if param_psi else PsiNet(h, L)
     e = fix_E if fix_E is not None else ETildeNet(h, L)
-    p = [p for n in h_nets for p in n.parameters()] + list(psi.parameters()) + list(e.parameters())
-    opt = optim.Adam(p, lr=lr); hist = dict(d=[], p=[], t=[])
-    for ep in range(epochs):
-        opt.zero_grad(); Ld = Lp = Lmono = 0.0
-        for i, r in enumerate(data["runs"]):                       # enumerate (was .index(r))
+    
+    # Phase A: data-only training
+    pA = [p for n in h_nets for p in n.parameters()]
+    oA = optim.Adam(pA, lr=lr)
+    Ld_A = 0.0
+    for ep in range(epochs // 2):
+        oA.zero_grad(); Ld = 0.0
+        for i, r in enumerate(data["runs"]):
+            td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
+            hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
+            Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd) ** 2)
+        nrun = len(data["runs"])
+        Ld = Ld / nrun
+        Ld.backward(); oA.step()
+        Ld_A = float(Ld.item())
+        if ep % 20 == 0 or ep == (epochs // 2) - 1:
+            prog.progress((ep + 1) / (epochs // 2) * 0.5)
+            ph.caption(f"Phase A epoch {ep+1}/{epochs//2} · L_data {Ld_A:.5f}")
+    
+    # Phase C: joint training (data + physics)
+    pC = [p for n in h_nets for p in n.parameters()] + list(psi.parameters()) + list(e.parameters())
+    oC = optim.Adam(pC, lr=lr)
+    hist = dict(d=[], p=[], t=[])
+    Ld_C = 0.0
+    for ep in range(epochs // 2, epochs):
+        oC.zero_grad(); Ld = Lp = Lmono = 0.0
+        for i, r in enumerate(data["runs"]):
             td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
             hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
             Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd) ** 2)
@@ -328,45 +356,25 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
             res, hh, _ = residual(h_nets[i], psi, e, tc, r["w"])
             if reweight_h3:
                 wgt = 1.0 / (hh.detach() ** 3 + 1e-3)
-                wgt = wgt / wgt.mean()      # mean-normalize: rebalance points, don't rescale the loss
+                wgt = wgt / wgt.mean()
                 Lp = Lp + torch.mean((wgt * res) ** 2)
             else:
                 Lp = Lp + torch.mean(res ** 2)
-            if mono_w > 0.0:                # enforce NON-INCREASING Psi (matches decaying ground truth)
+            if mono_w > 0.0:
                 pt = psi(tc); dpt = torch.autograd.grad(pt.sum(), tc, create_graph=True, retain_graph=True)[0]
-                Lmono = Lmono + torch.mean(torch.relu(dpt)) ** 2     # penalize dPsi/dtau > 0
-        nrun = len(data["runs"])        # make the data/physics balance run-count-invariant
+                Lmono = Lmono + torch.mean(torch.relu(dpt)) ** 2
+        nrun = len(data["runs"])
         Ld = Ld / nrun; Lp = Lp / nrun
         if mono_w > 0.0:
             Lmono = Lmono / nrun
-        loss = w_d * Ld + w_p * Lp + mono_w * Lmono; loss.backward(); opt.step()
+        loss = w_d * Ld + w_p * Lp + mono_w * Lmono; loss.backward(); oC.step()
         hist["d"].append(Ld.item()); hist["p"].append(Lp.item()); hist["t"].append(loss.item())
+        Ld_C = float(Ld.item())
         if ep % 20 == 0 or ep == epochs - 1:
-            prog.progress((ep + 1) / epochs)
-            ph.caption(f"epoch {ep+1}/{epochs} · L_data {Ld.item():.5f} · L_phys {Lp.item():.5f}")
+            prog.progress(0.5 + (ep - epochs // 2 + 1) / (epochs - epochs // 2) * 0.5)
+            ph.caption(f"Phase C epoch {ep+1}/{epochs} · L_data {Ld_C:.5f} · L_phys {Lp.item():.5f}")
 
-    # ---- consistency probe (NEW): did enforcing the ODE wreck the data-fit? ----
-    # joint_fit    = h-error of the physics-trained nets at the data points
-    # dataonly_fit = h-error after re-fitting COPIES of those nets to data alone
-    # data that obey the ODE  -> both small ;  data that don't  -> joint_fit >> dataonly_fit
-    def _relp(pred, targ):
-        pred = pred.detach().cpu().numpy().ravel(); targ = targ.cpu().numpy().ravel()
-        return float(np.mean(np.abs(pred - targ) / (np.abs(targ) + 1e-8)) * 100)
-    joint_fit = []; dataonly_fit = []
-    for i, r in enumerate(data["runs"]):
-        td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
-        hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
-        with torch.no_grad():
-            joint_fit.append(_relp(h_nets[i](td, 1.0), hd))
-        cl = ThicknessNet(h, L); cl.load_state_dict(h_nets[i].state_dict())   # throwaway copy
-        opc = optim.Adam(cl.parameters(), lr=lr)
-        for _ in range(250):
-            opc.zero_grad(); Lc = torch.mean((cl(td, 1.0) - hd) ** 2); Lc.backward(); opc.step()
-        with torch.no_grad():
-            dataonly_fit.append(_relp(cl(td, 1.0), hd))
-
-    return dict(h_nets=h_nets, psi=psi, e=e,
-                joint_fit=joint_fit, dataonly_fit=dataonly_fit), hist
+    return dict(hn=h_nets, psi=psi, en=e, Ld_A=Ld_A, Ld_C=Ld_C), hist
 
 def evaluate(nets, data):
     with torch.no_grad():
@@ -665,8 +673,9 @@ with tb[3]:
                 h_errs = [h_err_for(0)[0]] + ([h_err_for(1)[0]] if len(runs) > 1 else [])
                 worst = float(max(h_errs))
                 # consistency probe: joint-trained data-loss vs data-only refit
-                cons_ratio = consistency_probe(param, runs)
-                v, arel, drel, note, level = verdict(ms, hor, h_errs=h_errs, cons_ratio=cons_ratio)
+                Ld_A = st.session_state.nets.get('Ld_A', None)
+                Ld_C = st.session_state.nets.get('Ld_C', None)
+                v, arel, drel, note, level = verdict(ms, hor, fit_errs=h_errs, Ld_A=Ld_A, Ld_C=Ld_C)
                 bad = (level == 'bad')
                 warn = (level == 'warn')
                 lines = [
