@@ -323,7 +323,7 @@ with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
     n_colloc = st.slider("Collocation points", 50, 400, 200, 10)
     seed = st.number_input("Seed", 0, 999, 42)
 with st.sidebar.expander("Training", expanded=True):
-    epochs = st.slider("Epochs", 200, 4000, 1500, 100)
+    epochs = st.slider("Epochs", 200, 30000, 1500, 100)
     lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3)
     hid = st.slider("Hidden width", 16, 64, 32, 8)
     lay = st.slider("Hidden layers", 2, 5, 3)
