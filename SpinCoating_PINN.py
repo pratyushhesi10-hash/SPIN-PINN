@@ -258,9 +258,10 @@ def simulate(psi_A, psi_d, E_B, E_d, w, tau):
 
 @st.cache_data
 # ─────────────────────────── Dense-early sampling helper ───────────────────────────
-def _sample_tau(n_meas, dense_early, early_frac, early_span, rng):
+def _sample_tau(n_meas, dense_early, early_frac, early_span, seed):
     """Stratified sample times; optionally concentrate a fraction of the points
     in the early window [0, early_span] where the viscosity signal lives."""
+    rng = np.random.default_rng(seed)
     if not dense_early:                                   # unchanged default
         edges = np.linspace(0.0, 1.0, n_meas + 1)
         return np.array([rng.uniform(edges[i], edges[i + 1]) for i in range(n_meas)])
@@ -283,7 +284,7 @@ def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc,
         w = rpm / w_ref
         h = simulate(psi_A, psi_d, E_B, E_d, w, tau)
         K_true.append((w**2) * psi_A*np.exp(-psi_d*tau))
-        tgt = _sample_tau(n_meas, dense_early, early_frac, early_span, rng)
+        tgt = _sample_tau(n_meas, dense_early, early_frac, early_span, seed)
         idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tgt]))
         h_s = h[idx]; meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
         runs.append(dict(rpm=rpm, w=w, h=h, tau_s=tau[idx], h_meas=meas,
