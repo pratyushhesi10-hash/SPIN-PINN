@@ -671,11 +671,11 @@ with tb[3]:
                 warn = (level == 'warn')
                 lines = [
                     v['h'],
-                    \"consistency: \" + v['consistency'],
+                    "consistency: " + v['consistency'],
                     v['E'],
                     v['combined'],
-                    \"note: \" + note,
-                    \"identifiability: K̃ and Ẽ trade off — the combined term K̃ĥ³+Ẽ is what the data pins.\"
+                    "note: " + note,
+                    "identifiability: K̃ and Ẽ trade off — the combined term K̃ĥ³+Ẽ is what the data pins."
                 ]
                 msg = "\n\n".join("• " + x for x in lines)
                 if bad:            st.error("🚨 Trust verdict (computed from the real h-fit)\n\n" + msg)
