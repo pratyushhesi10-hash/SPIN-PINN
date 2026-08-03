@@ -398,8 +398,8 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
 def evaluate(nets, data):
     with torch.no_grad():
         t = torch.tensor(data["tau"], dtype=torch.float32).reshape(-1, 1)
-        psi, e = nets["psi"](t).numpy().flatten(), nets["e"](t).numpy().flatten()
-        hs = [n(t, 1.0).numpy().flatten() for n in nets["h_nets"]]
+        psi, e = nets["psi"](t).numpy().flatten(), nets["en"](t).numpy().flatten()
+        hs = [n(t, 1.0).numpy().flatten() for n in nets["hn"]]
     return dict(psi=psi, e=e, hs=hs, Ks=[(r["w"]**2)*psi for r in data["runs"]])
 
 def algebraic_split(h_nets, w0, w1, tau_d):
