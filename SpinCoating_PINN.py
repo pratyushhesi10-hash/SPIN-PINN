@@ -587,7 +587,7 @@ with tb[3]:
             if truth and run.get("h") is not None and len(run["h"]) == len(r["hs"][i]):
                 return rel(r["hs"][i], run["h"]), "rec"          # synthetic: dense recovery
             with torch.no_grad():                                  # manual: fit / recovery @ data τ
-                hd = st.session_state.nets["h_nets"][i](
+                hd = st.session_state.nets["hn"][i](
                     torch.tensor(run["tau_s"], dtype=torch.float32).reshape(-1, 1), 1.0).numpy().flatten()
             if run.get("h") is not None:
                 return rel(hd, run["h"]), "rec@data"
@@ -633,7 +633,7 @@ with tb[3]:
         alg = None
         if n >= 2:
             try:
-                alg = algebraic_split(st.session_state.nets["h_nets"], w0, w1, tau_d)
+                alg = algebraic_split(st.session_state.nets["hn"], w0, w1, tau_d)
             except Exception as ex:
                 st.warning("algebraic split failed: %r" % ex)
         if alg is not None:
