@@ -27,6 +27,28 @@ def sample_tau(n, early_frac, rng):   # early_frac of points forced into tau<0.2
         lb = np.linspace(0.0, 1.0, n_l + 1); pts += [rng.uniform(lb[k], lb[k+1]) for k in range(n_l)]
     return np.array(pts)
 
+def early_biased_times(n_meas, early_frac=0.5, early_end=0.2):
+    """Stratified measurement times, biased toward early time.
+
+    Puts `early_frac` of the measurements (stratified) in [0, early_end] and the
+    remainder (stratified) in [early_end, 1]. This concentrates measurement density
+    in tau < 0.2, where the two-run viscosity leverage c(tau) is concentrated --
+    the region that actually makes Psi identifiable.
+
+    Uses the global np.random, so your existing np.random.seed(seed) still makes
+    it reproducible.
+    """
+    n_early = int(round(early_frac * n_meas))
+    n_late = n_meas - n_early
+    t = []
+    if n_early > 0:
+        eb = np.linspace(0.0, early_end, n_early + 1)
+        t += [float(np.random.uniform(eb[i], eb[i + 1])) for i in range(n_early)]
+    if n_late > 0:
+        lb = np.linspace(early_end, 1.0, n_late + 1)
+        t += [float(np.random.uniform(lb[i], lb[i + 1])) for i in range(n_late)]
+    return np.sort(np.asarray(t))
+
 # ─────────────────────────── Page & theme ───────────────────────────
 
 st.set_page_config(page_title="SpinCoat PINN Lab", page_icon="🧪", layout="wide")
