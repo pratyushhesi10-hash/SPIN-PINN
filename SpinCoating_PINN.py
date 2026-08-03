@@ -469,10 +469,15 @@ with st.sidebar.expander("Physics", expanded=True):
 with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
     n_meas  = st.slider("Measurements / run", 4, 24, 8)
     noise   = st.slider("Noise σ", 0.0, 0.10, 0.02, 0.005)
-    early_frac = st.slider("Fraction of measurements in early window (τ<0.2)", 0.0, 1.0, 0.5, 0.05)
-    early_end  = st.slider("Early window end τ", 0.05, 0.50, 0.20, 0.05)
     n_colloc = st.slider("Collocation points", 50, 400, 200, 10)
     seed = st.number_input("Seed", 0, 999, 42)
+    dense_early = st.checkbox("Dense early sampling (viscosity window)", value=False,
+                              help="Concentrate a chosen fraction of the measurements in the "
+                                   "early window where the viscosity signal lives.")
+    early_frac = st.slider("…fraction of points in early window", 0.2, 0.8, 0.5, 0.05,
+                           disabled=not dense_early)
+    early_span = st.slider("…early window span (τ)", 0.1, 0.4, 0.2, 0.05,
+                           disabled=not dense_early)
 with st.sidebar.expander("Training", expanded=True):
     epochs = st.slider("Epochs", 200, 30000, 1500, 100)
     lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3)
@@ -509,7 +514,8 @@ train_btn = st.sidebar.button("Train PINN", use_container_width=True, key="train
 for k in ("data", "nets", "hist"):
     st.session_state.setdefault(k, None)
 if gen_btn:
-    st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed, early_frac, early_end)
+    st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed,
+                                          dense_early=dense_early, early_frac=early_frac, early_span=early_span)
     st.session_state.nets = st.session_state.hist = None
 
 # ─────────────────────────── Tabs ───────────────────────────
