@@ -929,7 +929,8 @@ def exhaustive_configs():   # 60 pruned combos
         for mono in ([False] if psipar else [False, True]):
             for emode in ("free", "const", "exp"):
                 for autofill in ([False] if emode == "free" else [False, True]):
-                    yield dict(early=early, psipar=psipar, mono=mono, rw=rw, emode=emode, autofill=autofill)
+                    cfg = dict(early=early, psipar=psipar, mono=mono, rw=rw, emode=emode, autofill=autofill)
+                    yield (cfg_name(cfg), cfg)
 
 def curated_configs():      # sensible stacks, incl. two "full" stacks
     for c in individual_configs(): yield c
