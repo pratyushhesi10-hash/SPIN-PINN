@@ -206,11 +206,11 @@ def _build_manual(rows, h_wet, t_ref, default_rpm):
                 manual_meta=dict(h_wet=float(h_wet), t_ref=float(t_ref), rpm_ref=rpm_ref))
 
 # ─────────────────────────── Training / eval (base; .index -> enumerate) ───────────────────────────
-def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mono_w=0.0, reweight_h3=False):
+def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mono_w=0.0, reweight_h3=False, fix_E=None):
     torch.manual_seed(seed)
     h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
     psi = PsiPar() if param_psi else PsiNet(h, L)
-    e = ETildeNet(h, L)
+    e = fix_E if fix_E is not None else ETildeNet(h, L)
     p = [p for n in h_nets for p in n.parameters()] + list(psi.parameters()) + list(e.parameters())
     opt = optim.Adam(p, lr=lr); hist = dict(d=[], p=[], t=[])
     for ep in range(epochs):
@@ -427,7 +427,7 @@ with tb[2]:
             st.stop()
         prog = st.progress(0); ph = st.empty()
         st.session_state.nets, st.session_state.hist = train(
-            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3)
+            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3, fix_E=fix_E)
         st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
