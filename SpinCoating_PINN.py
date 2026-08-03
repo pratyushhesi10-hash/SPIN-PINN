@@ -149,17 +149,17 @@ def simulate(psi_A, psi_d, E_B, E_d, w, tau):
     return solve_ivp(rhs, (0, 1), [1.0], t_eval=tau, method="RK45").y[0]
 
 @st.cache_data
-def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed):
+def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed, early_frac=0.5, early_end=0.2):
     rng = np.random.default_rng(seed); torch.manual_seed(seed)
     tau = np.linspace(0, 1, 500); w_ref = rpm_a
     runs, K_true = [], []
+    # Use stratified early-biased sampling
+    tau_meas = early_biased_times(n_meas, early_frac=early_frac, early_end=early_end)
     for rpm in (rpm_a, rpm_b):
         w = rpm / w_ref
         h = simulate(psi_A, psi_d, E_B, E_d, w, tau)
         K_true.append((w**2) * psi_A*np.exp(-psi_d*tau))
-        edges = np.linspace(0, 1, n_meas + 1)
-        tgt = np.array([rng.uniform(edges[i], edges[i+1]) for i in range(n_meas)])
-        idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tgt]))
+        idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tau_meas]))
         h_s = h[idx]; meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
         runs.append(dict(rpm=rpm, w=w, h=h, tau_s=tau[idx], h_meas=meas,
                          tau_c=np.sort(rng.uniform(0, 1, n_colloc))))
@@ -342,6 +342,8 @@ with st.sidebar.expander("Physics", expanded=True):
 with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
     n_meas  = st.slider("Measurements / run", 4, 24, 8)
     noise   = st.slider("Noise σ", 0.0, 0.10, 0.02, 0.005)
+    early_frac = st.slider("Fraction of measurements in early window (τ<0.2)", 0.0, 1.0, 0.5, 0.05)
+    early_end  = st.slider("Early window end τ", 0.05, 0.50, 0.20, 0.05)
     n_colloc = st.slider("Collocation points", 50, 400, 200, 10)
     seed = st.number_input("Seed", 0, 999, 42)
 with st.sidebar.expander("Training", expanded=True):
@@ -380,7 +382,7 @@ train_btn = st.sidebar.button("Train PINN", use_container_width=True, key="train
 for k in ("data", "nets", "hist"):
     st.session_state.setdefault(k, None)
 if gen_btn:
-    st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed)
+    st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed, early_frac, early_end)
     st.session_state.nets = st.session_state.hist = None
 
 # ─────────────────────────── Tabs ───────────────────────────
