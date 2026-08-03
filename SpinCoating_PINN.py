@@ -1,6 +1,4 @@
-# app.py — SpinCoat PINN Lab  (+ Manual / CSV data tab)
-# Run:  streamlit run app.py
-import io, csv
+import io, csv, itertools, time
 import copy
 import numpy as np
 import pandas as pd
@@ -12,7 +10,6 @@ from scipy.integrate import solve_ivp
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from style import load_css, chip
 from style import load_css, chip, style_matplotlib
 
 
@@ -227,6 +224,45 @@ class FixedEExp(nn.Module):
         self.register_buffer("E_d", torch.tensor(float(E_d), dtype=torch.float32))
     def forward(self, tau):
         return self.E_B * torch.exp(-self.E_d * tau)
+
+# ═══════════════════ FIXES LAB HELPERS ═══════════════════
+def inv_softplus(x):
+    x = float(np.clip(x, 1e-3, 20.0)); return float(np.log(np.expm1(x)))
+
+class PsiParNet(nn.Module):                      # Fix: parametrized Ψ = A·e^(−βτ)
+    def __init__(self):
+        super().__init__()
+        self.lA = nn.Parameter(torch.tensor(0.0)); self.lB = nn.Parameter(torch.tensor(0.0))
+        self.sp = nn.Softplus()
+    def forward(self, tau):
+        return (self.sp(self.lA)+1e-3) * torch.exp(-(self.sp(self.lB)+1e-3)*tau)
+
+class EConstNet(nn.Module):                      # Fix: E = const
+    def __init__(self, e0=1.0):
+        super().__init__(); self.p = nn.Parameter(torch.tensor(inv_softplus(e0))); self.sp = nn.Softplus()
+    def forward(self, tau): return self.sp(self.p) * torch.ones_like(tau)
+
+class EExpNet(nn.Module):                        # Fix: E = E_B·e^(−E_d·τ)
+    def __init__(self, e0=1.0, d0=1.0):
+        super().__init__()
+        self.pB = nn.Parameter(torch.tensor(inv_softplus(e0)))
+        self.pD = nn.Parameter(torch.tensor(inv_softplus(d0))); self.sp = nn.Softplus()
+    def forward(self, tau): return self.sp(self.pB) * torch.exp(-self.sp(self.pD)*tau)
+
+def estimate_E_late_sweep(data, tau_cut=0.5):          # Fix: autofill E_B,E_d from late-time slope
+    EB, ED = [], []
+    for r in data["runs"]:
+        o = np.argsort(r["tau_s"]); t, h = r["tau_s"][o], r["h_meas"][o]
+        m = t >= tau_cut; t, h = t[m], h[m]
+        if len(t) < 3: continue
+        dt = np.diff(t); ok = dt > 1e-8
+        tm = 0.5*(t[1:]+t[:-1])[ok]; s = (-np.diff(h)/dt)[ok]
+        pos = s > 1e-8
+        if pos.sum() < 2: continue
+        c = np.polyfit(tm[pos], np.log(s[pos]), 1)
+        ED.append(-c[0]); EB.append(np.exp(c[1]))
+    if not EB: return None
+    return (float(np.clip(np.median(EB),1e-3,1e2)), float(np.clip(np.median(ED),0.0,10.0)))
 
 def estimate_E_late(runs, k=4):
     """Anchor Ẽ from the late-time slope, where ĥ³≈0 so dh̃/dτ ≈ −Ẽ.
@@ -520,7 +556,7 @@ if gen_btn:
     st.session_state.nets = st.session_state.hist = None
 
 # ─────────────────────────── Tabs ───────────────────────────
-tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV", "Model"])
+tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV", "Model", "Fixes Lab"])
 
 # ---------- 0 · PHYSICS ----------
 with tb[0]:
@@ -823,3 +859,144 @@ with tb[5]:
       Ψ/E *split* remains the structural limit. To recover Ψ decay you need dense *early*-time samples (τ≲0.2) or a
       viscosity-sensitive measurement.
     """)
+
+# ═══════════════════ FIXES LAB (paste after Model tab) ═══════════════════
+def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, ph=None, tag=""):
+    torch.manual_seed(seed); rng = np.random.default_rng(seed)
+    runs = data["runs"]; h_nets = [ThicknessNet(hid, lay) for _ in runs]
+    e_init = estimate_E_late_sweep(data) if cfg.get("autofill") else None
+    if e_init is None: e_init = (1.0, 1.0)
+    psi = PsiParNet() if cfg.get("psipar") else PsiNet(hid, lay)
+    em = cfg.get("emode", "free")
+    e_net = EConstNet(e_init[0]) if em=="const" else (EExpNet(*e_init) if em=="exp" else ETildeNet(hid, lay))
+    TD, HD, TC = [], [], []
+    for r in runs:
+        ts, hs = r["tau_s"], r["h_meas"]
+        if cfg.get("early") and r.get("h") is not None:      # dense early measurements
+            te = np.sort(rng.uniform(0.0, 0.2, 6)); he = np.interp(te, data["tau"], r["h"])
+            he = np.clip(he + rng.normal(0, float(noise), len(te))*he, 1e-4, None)
+            ts = np.concatenate([ts, te]); hs = np.concatenate([hs, he])
+        TD.append(torch.tensor(ts, dtype=torch.float32).reshape(-1,1))
+        HD.append(torch.tensor(hs, dtype=torch.float32).reshape(-1,1))
+        n = int(n_colloc)
+        tc = (np.sort(np.concatenate([rng.uniform(0,1,n//2), rng.beta(2,5,n-n//2)]))
+              if cfg.get("early") else np.sort(rng.uniform(0,1,n)))
+        TC.append(torch.tensor(tc, dtype=torch.float32).reshape(-1,1).requires_grad_(True))
+    params = [p for net in h_nets for p in net.parameters()] + list(psi.parameters()) + list(e_net.parameters())
+    opt = optim.Adam(params, lr=lr); t0 = time.time()
+    for ep in range(epochs):
+        opt.zero_grad(); Ld = Lp = Lm = 0.0
+        for i, r in enumerate(runs):
+            Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i])**2)
+            res, hc, _ = residual(h_nets[i], psi, e_net, TC[i], r["w"])
+            if cfg.get("rw"):                                 # 1/h³ reweight (capped)
+                wgt = torch.clamp(1.0/(hc.detach()**3 + 1e-4), max=100.0)
+                res = res * (wgt / wgt.mean())
+            Lp = Lp + torch.mean(res**2)
+            if cfg.get("mono") and not cfg.get("psipar"):     # Ψ monotone-decay penalty
+                dp = torch.autograd.grad(psi(TC[i]), TC[i], torch.ones_like(TC[i]), create_graph=True)[0]
+                Lm = Lm + torch.mean(torch.relu(dp)**2)
+        loss = w_d*Ld + w_p*Lp + w_m*Lm
+        loss.backward(); opt.step()
+        if prog is not None and ep % 50 == 0: prog.progress((ep+1)/epochs)
+        if ph is not None and ep % 50 == 0:
+            ph.caption(f"{tag} · epoch {ep+1}/{epochs} · Ld {Ld.item():.4f} · Lp {Lp.item():.4f} · Lm {Lm.item():.4f}")
+    return dict(h_nets=h_nets, psi=psi, e=e_net), time.time()-t0
+
+def sweep_metrics(nets, data):
+    r = evaluate(nets, data); m = {}
+    rel = lambda p, t: float(np.mean(np.abs(p-t)/(np.abs(t)+1e-8))*100)
+    if data.get("psi") is not None:
+        m["psi"] = rel(r["psi"], data["psi"]); m["E"] = rel(r["e"], data["e"])
+        m["h"] = float(np.mean([rel(r["hs"][i], data["runs"][i]["h"]) for i in range(len(data["runs"]))]))
+        m["comb"] = float(np.mean([rel(r["Ks"][i]*r["hs"][i]**3 + r["e"],
+                                       data["K_true"][i]*data["runs"][i]["h"]**3 + data["e"])
+                                   for i in range(len(data["runs"]))]))
+    return m
+
+def individual_configs():
+    yield ("baseline",            {})
+    yield ("dense-early",         dict(early=True))
+    yield ("PsiPar",              dict(psipar=True))
+    yield ("mono",                dict(mono=True))
+    yield ("1/h³ reweight",       dict(rw=True))
+    yield ("E=const",             dict(emode="const"))
+    yield ("E=exp",               dict(emode="exp"))
+    yield ("E=exp+autofill",      dict(emode="exp", autofill=True))
+
+def exhaustive_configs():   # 60 pruned combos
+    for early, psipar, rw in itertools.product([False, True], repeat=3):
+        for mono in ([False] if psipar else [False, True]):
+            for emode in ("free", "const", "exp"):
+                for autofill in ([False] if emode == "free" else [False, True]):
+                    yield dict(early=early, psipar=psipar, mono=mono, rw=rw, emode=emode, autofill=autofill)
+
+def curated_configs():      # sensible stacks, incl. two "full" stacks
+    for c in individual_configs(): yield c
+    yield ("early+rw",                dict(early=True, rw=True))
+    yield ("early+psipar",            dict(early=True, psipar=True))
+    yield ("psipar+exp+autofill",     dict(psipar=True, emode="exp", autofill=True))
+    yield ("early+mono+rw",           dict(early=True, mono=True, rw=True))
+    yield ("early+rw+exp+autofill",   dict(early=True, rw=True, emode="exp", autofill=True))
+    yield ("full(mono)",              dict(early=True, mono=True, rw=True, emode="exp", autofill=True))
+    yield ("full(psipar)",            dict(early=True, psipar=True, rw=True, emode="exp", autofill=True))
+
+def cfg_name(cfg):
+    p = [k for k in ("early","psipar","mono","rw","autofill") if cfg.get(k)]
+    if cfg.get("emode","free") != "free": p.append("E="+cfg["emode"])
+    return "+".join(p) if p else "baseline"
+
+def run_sweep(configs, epochs, w_m):
+    configs = list(configs)
+    st.session_state.setdefault("sweep_rows", [])
+    prg = st.progress(0.0); ph = st.empty(); slot = st.empty()
+    t_first = None
+    for k, (name, cfg) in enumerate(configs):
+        prg.progress(k/len(configs))
+        nets, dt = train_cfg(st.session_state.data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m,
+                             seed, prog=None, ph=ph, tag=name)
+        m = sweep_metrics(nets, st.session_state.data)
+        st.session_state.sweep_rows.append(
+            {"config": name, "Ψ%": round(m["psi"],1) if "psi" in m else None,
+             "E%": round(m["E"],1) if "E" in m else None,
+             "comb%": round(m["comb"],1) if "comb" in m else None,
+             "h%": round(m["h"],1) if "h" in m else None, "sec": round(dt)})
+        key = m.get("psi", m.get("comb", 1e9))
+        best = st.session_state.get("sweep_best")
+        if best is None or key < best[0]: st.session_state.sweep_best = (key, name, nets)
+        if t_first is None: t_first = dt
+        ph.caption(f"[{k+1}/{len(configs)}] {name} · {dt:.0f}s · ≈{t_first*(len(configs)-k-1)/60:.0f} min left")
+        slot.dataframe(pd.DataFrame(st.session_state.sweep_rows), use_container_width=True)
+    prg.progress(1.0); ph.caption("sweep complete")
+
+with tb[6]:
+    st.markdown("#### Fixes Lab — individual & combined mitigation sweeps")
+    st.caption("Needs loaded data (synthetic recommended; manual data has no Ψ/E truth to score against). "
+               "Exhaustive = all 60 pruned combinations — heavy on CPU; keep combo epochs low.")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: ep_ind = st.number_input("epochs · individual", 200, 4000, 2000, 100)
+    with c2: ep_swp = st.number_input("epochs · combo", 200, 4000, 800, 100)
+    with c3: w_mono = st.slider("mono weight", 0.0, 5.0, 1.0, 0.1)
+    with c4: exhaustive = st.checkbox("exhaustive combos (60)", value=False)
+    if exhaustive:
+        st.warning(f"60 configs × {ep_swp} epochs. ETA is shown live after the first config; "
+                   "on CPU this can take 10–30+ min and the UI will look frozen. Consider ≤800 epochs.")
+    b_ind = st.button("Run individual fixes", use_container_width=True, key="sw_ind")
+    b_cmb = st.button("Run combination sweep (separate)", use_container_width=True, key="sw_combo")
+    if b_ind or b_cmb:
+        if st.session_state.data is None:
+            st.warning("Load/generate data first."); st.stop()
+        if b_ind: run_sweep(individual_configs(), int(ep_ind), w_mono)
+        else:     run_sweep(exhaustive_configs() if exhaustive else curated_configs(), int(ep_swp), w_mono)
+        st.rerun()
+    if st.session_state.get("sweep_rows"):
+        df = pd.DataFrame(st.session_state.sweep_rows)
+        if "Ψ%" in df.columns: df = df.sort_values("Ψ%")
+        st.dataframe(df, use_container_width=True)
+        bb = st.columns(3)
+        if bb[0].button("Load best sweep into Results tab", key="ldbest") and st.session_state.get("sweep_best"):
+            st.session_state.nets = st.session_state.sweep_best[2]
+            st.success(f"Loaded best: {st.session_state.sweep_best[1]}")
+        if bb[1].button("Clear sweep results", key="clrsw"):
+            st.session_state.pop("sweep_rows", None); st.session_state.pop("sweep_best", None); st.rerun()
+        st.caption(f"Best so far: {st.session_state.get('sweep_best', (None,'—'))[1]}")
