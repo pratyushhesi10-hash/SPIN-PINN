@@ -80,6 +80,41 @@ class ETildeNet(nn.Module):
         self.net = nn.Sequential(*L_); self.sp = nn.Softplus()
     def forward(self, tau): return self.sp(self.net(tau))
 
+# ================= E CORRECTION: fixed-Ẽ modes =================
+class FixedE(nn.Module):
+    """Constant evaporation Ẽ(τ)=E_B. Zero trainable params -> optimizer cannot touch it."""
+    def __init__(self, E_B):
+        super().__init__()
+        self.register_buffer("E_B", torch.tensor(float(E_B), dtype=torch.float32))
+    def forward(self, tau):
+        return self.E_B.expand_as(tau)
+
+class FixedEExp(nn.Module):
+    """Parametric evaporation Ẽ(τ)=E_B·exp(−E_d·τ). Zero trainable params."""
+    def __init__(self, E_B, E_d):
+        super().__init__()
+        self.register_buffer("E_B", torch.tensor(float(E_B), dtype=torch.float32))
+        self.register_buffer("E_d", torch.tensor(float(E_d), dtype=torch.float32))
+    def forward(self, tau):
+        return self.E_B * torch.exp(-self.E_d * tau)
+
+def estimate_E_late(runs, k=4):
+    """Anchor Ẽ from the late-time slope, where ĥ³≈0 so dh̃/dτ ≈ −Ẽ.
+    Pools the last k points of every run, log-linear fit of −slope vs τ.
+    Returns (E_B, E_d)."""
+    ts, ys = [], []
+    for r in runs:
+        t = np.asarray(r["tau_s"], float); h = np.asarray(r["h_meas"], float)
+        if len(t) < max(3, k): continue
+        t, h = t[-k:], h[-k:]
+        sl = np.gradient(h, t)
+        m = sl < 0
+        if m.sum() < 2: continue
+        ts.append(t[m]); ys.append(np.log(-sl[m]))
+    if not ts: return 3.0, 0.0
+    slope, intercept = np.polyfit(np.concatenate(ts), np.concatenate(ys), 1)
+    return float(np.exp(intercept)), float(-slope)
+
 def residual(h_net, psi_net, e_net, tau, w_norm):
     h = h_net(tau, h0=1.0)
     dh = torch.autograd.grad(h, tau, torch.ones_like(h), create_graph=True, retain_graph=True)[0]
