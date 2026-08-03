@@ -107,6 +107,25 @@ def verdict(ms, hor, fit_errs=None, Ld_A=None, Ld_C=None):
     return v, arel, drel, note, level
 
 
+def status_card(level, title, lines):
+    """Render a simple status card using Streamlit's native components."""
+    colors = {'ok': '#22c55e', 'warn': '#f59e0b', 'bad': '#ef4444'}
+    icons = {'ok': '✅', 'warn': '⚠️', 'bad': '🚨'}
+    color = colors.get(level, '#64748b')
+    icon = icons.get(level, '•')
+    
+    html = f'''
+    <div style="border-left: 4px solid {color}; padding: 12px 16px; margin: 10px 0; 
+                background: #f8fafc; border-radius: 4px;">
+        <div style="font-weight: 600; font-size: 1.1em; margin-bottom: 8px;">{icon} {title}</div>
+        <div style="font-family: monospace; font-size: 0.9em; line-height: 1.6;">
+            {'<br>'.join(str(line) for line in lines)}
+        </div>
+    </div>
+    '''
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def consistency_probe(param, runs, steps=300, lr=1e-3):
     """Post-hoc consistency probe. Compares the data-loss of the JOINT-trained h_nets
     against a short DATA-ONLY refit of the same h_nets (psi/en frozen, copy discarded).
@@ -669,27 +688,24 @@ with tb[3]:
                        "the decay rate back into reach.")
 
         if not truth:
-                # real per-run h-fit errors
-                h_errs = [h_err_for(0)[0]] + ([h_err_for(1)[0]] if len(runs) > 1 else [])
-                worst = float(max(h_errs))
-                # consistency probe: joint-trained data-loss vs data-only refit
-                Ld_A = st.session_state.nets.get('Ld_A', None)
-                Ld_C = st.session_state.nets.get('Ld_C', None)
-                v, arel, drel, note, level = verdict(ms, hor, fit_errs=h_errs, Ld_A=Ld_A, Ld_C=Ld_C)
-                bad = (level == 'bad')
-                warn = (level == 'warn')
-                lines = [
-                    v['h'],
-                    "consistency: " + v['consistency'],
-                    v['E'],
-                    v['combined'],
-                    "note: " + note,
-                    "identifiability: K̃ and Ẽ trade off — the combined term K̃ĥ³+Ẽ is what the data pins."
-                ]
-                msg = "\n\n".join("• " + x for x in lines)
-                if bad:            st.error("🚨 Trust verdict (computed from the real h-fit)\n\n" + msg)
-                elif warn or worst >= 15: st.warning("⚠️ Trust verdict (computed from the real h-fit)\n\n" + msg)
-                else:              st.success("✅ Trust verdict (computed from the real h-fit)\n\n" + msg)
+            # real per-run h-fit errors (what the verdict should read, not "by construction")
+            param = st.session_state.nets
+            runs = d["runs"]
+            fit_errs = []
+            for i, r in enumerate(runs):
+                with torch.no_grad():
+                    hp = param['hn'][i](r['td'], 1.0).numpy().ravel()
+                fit_errs.append(float(np.mean(np.abs(hp - r['h_meas']) / (np.abs(r['h_meas']) + 1e-8)) * 100))
+
+            # ms and hor for multi-start analysis (single-run fallback)
+            ms = None  # multi-start spread not computed in single-run mode
+            hor = {'frac_early': frac} if 'frac' in dir() else None
+
+            v, arel, drel, note, level = verdict(ms, hor, fit_errs=fit_errs,
+                                                 Ld_A=param.get('Ld_A'), Ld_C=param.get('Ld_C'))
+            flag = {'ok': '✅', 'warn': '⚠️', 'bad': '🚨'}[level]
+            status_card(level, "%s Trust verdict" % flag,
+                        ["%s: %s" % (k, val) for k, val in v.items()] + [note])
     else:
         st.info("Generate or load data, then train.")
 
