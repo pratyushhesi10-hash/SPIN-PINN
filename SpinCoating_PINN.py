@@ -1118,6 +1118,9 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
             if cfg.get("rw"):                                 # 1/h³ reweight (capped)
                 wgt = torch.clamp(1.0/(hc.detach()**3 + 1e-4), max=100.0)
                 res = res * (wgt / wgt.mean())
+            if cfg.get('causal', 'none') != 'none':
+                cw = causal_physics_weights(TC[i].detach(), ep, epochs, cfg['causal'])
+                res = res * cw
             Lp = Lp + torch.mean(res**2)
             if cfg.get("mono") and not cfg.get("psipar"):     # Ψ monotone-decay penalty
                 dp = torch.autograd.grad(psi(TC[i]), TC[i], torch.ones_like(TC[i]), create_graph=True)[0]
@@ -1150,6 +1153,8 @@ def individual_configs():
     yield ("E=const",             dict(emode="const"))
     yield ("E=exp",               dict(emode="exp"))
     yield ("E=exp+autofill",      dict(emode="exp", autofill=True))
+    yield ("causal_exp",          dict(causal='exp'))
+    yield ("causal_prog",         dict(causal='progressive'))
 
 def exhaustive_configs():   # 60 pruned combos
     for early, psipar, rw in itertools.product([False, True], repeat=3):
@@ -1172,6 +1177,8 @@ def curated_configs():      # sensible stacks, incl. two "full" stacks
 def cfg_name(cfg):
     p = [k for k in ("early","psipar","mono","rw","autofill") if cfg.get(k)]
     if cfg.get("emode","free") != "free": p.append("E="+cfg["emode"])
+    if cfg.get('causal', 'none') != 'none':
+        p.append('causal=' + cfg['causal'])
     return "+".join(p) if p else "baseline"
 
 def run_sweep(configs, epochs, w_m):
