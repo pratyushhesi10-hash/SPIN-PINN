@@ -624,7 +624,7 @@ with tb[1]:
         if n > 2:
             st.caption(f"(showing first 2 of {n} runs)")
         if SRC_SYN:
-            st.caption(f"{n_meas} stratified samples/run · σ={noise} · {n_colloc} collocation points · seed {seed}")
+            st.caption(f"{n_meas} stratified samples/run · {noise_model.lower()} σ={noise} · {n_colloc} collocation points · seed {seed}")
         else:
             m = d.get("manual_meta", {})
             st.caption(f"manual · {n} run(s) · h_wet={m.get('h_wet')} · t_ref={m.get('t_ref')} · rpm_ref={m.get('rpm_ref')}")
