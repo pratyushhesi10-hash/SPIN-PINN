@@ -7,14 +7,219 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.integrate import solve_ivp
+from scipy.optimize import least_squares
+from scipy.linalg import eigvalsh
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from style import load_css, chip, style_matplotlib
+import warnings
 
 
 load_css()
 style_matplotlib()   # add this line
+
+# ═══════════════════ ODE LAB: Concentration-Coupled Model ═══════════════════
+# Fixes 1–4: coupled physics, exact ODE solve, formal identifiability, optimal design
+
+# ─── Fix 1: Concentration-coupled model (Meyerhofer-type) ───
+
+def coupled_rhs(tau, y, params, w):
+    """
+    Meyerhofer-type concentration-coupled spin-coating model.
+
+    Physics:
+      Solute conservation:  c_p(τ) = (1-c₀)/h(τ)   (polymer volume fraction)
+      Solvent fraction:     c(τ)   = 1 - (1-c₀)/h(τ)
+      Viscosity:            Ψ(c)   = Ψ₀ · (c_p/(1-c₀))^γ  =  Ψ₀ · h^{-γ}
+      Evaporation:          E(c)   = E₀ · (c/c₀)^δ
+
+    ODE:  dh/dτ = -ω² Ψ₀ h^{3-γ}  -  E₀ ((1-(1-c₀)/h)/c₀)^δ
+
+    params = [Ψ₀, γ, E₀, δ, c₀]   (5 physically-interpretable scalars)
+    """
+    Psi0, gamma, E0, delta, c0 = params
+    h_floor = (1.0 - c0) + 1e-8
+    h = max(y[0], h_floor)
+
+    conv = (w ** 2) * Psi0 * h ** (3.0 - gamma)
+
+    c_solvent = max(1.0 - (1.0 - c0) / h, 1e-10)
+    evap = E0 * (c_solvent / max(c0, 1e-6)) ** delta
+
+    return [-conv - evap]
+
+
+def solve_coupled_ode(params, w, tau_eval):
+    sol = solve_ivp(
+        lambda t, y: coupled_rhs(t, y, params, w),
+        (0, 1), [1.0], t_eval=tau_eval,
+        method='RK45', rtol=1e-8, atol=1e-10, max_step=0.01,
+    )
+    return sol.y[0] if sol.success else np.full_like(tau_eval, np.nan)
+
+
+def coupled_psie_from_h(params, h_traj):
+    """Ψ(τ) and E(τ) from constitutive laws given h(τ)."""
+    Psi0, gamma, E0, delta, c0 = params
+    h = np.clip(h_traj, (1 - c0) + 1e-8, None)
+    Psi = Psi0 * h ** (-gamma)
+    c_s = np.clip(1.0 - (1.0 - c0) / h, 1e-10, None)
+    E = E0 * (c_s / max(c0, 1e-6)) ** delta
+    return Psi, E
+
+
+# ─── Fix 2: Exact ODE fitting ───
+
+CP_NAMES = ['Ψ₀', 'γ', 'E₀', 'δ', 'c₀']
+CP_LO = [1e-3, 0.1, 1e-3, 0.0, 0.30]
+CP_HI = [10.0, 8.0, 10.0, 5.0, 0.95]
+
+
+def coupled_residual_vec(params, runs_data):
+    res = []
+    for run in runs_data:
+        h_pred = solve_coupled_ode(params, run['w'], run['tau_s'])
+        if np.any(np.isnan(h_pred)):
+            return np.full(sum(len(r['h_meas']) for r in runs_data), 1e6)
+        res.append((h_pred - run['h_meas']) / max(np.std(run['h_meas']), 1e-4))
+    return np.concatenate(res)
+
+
+def fit_coupled_model(runs_data, p0):
+    return least_squares(
+        coupled_residual_vec, x0=p0, bounds=(CP_LO, CP_HI),
+        args=(runs_data,), method='trf', xtol=1e-10, ftol=1e-10, max_nfev=3000,
+    )
+
+
+# ─── Fix 3: Formal identifiability ───
+
+def compute_identifiability(result):
+    J = result.jac
+    n, p = len(result.fun), len(result.x)
+    dof = max(n - p, 1)
+    sigma2 = 2.0 * result.cost / dof
+    JtJ = J.T @ J
+    try:
+        cov = np.linalg.inv(JtJ) * sigma2
+        pstd = np.sqrt(np.clip(np.diag(cov), 0, None))
+        D = np.sqrt(np.diag(cov)); D[D == 0] = 1e-10
+        corr = np.clip(cov / np.outer(D, D), -1, 1)
+    except np.linalg.LinAlgError:
+        cov = np.full((p, p), np.nan); pstd = np.full(p, np.nan); corr = np.eye(p) * np.nan
+    FIM = JtJ / sigma2
+    ev = np.sort(eigvalsh(FIM))
+    return dict(J=J, FIM=FIM, cov=cov, corr=corr, pstd=pstd,
+                eigvals=ev, cond=ev[-1] / max(ev[0], 1e-15),
+                sigma2=sigma2, dof=dof, chi2=2 * result.cost)
+
+
+def profile_likelihood(result, runs_data, idx, n_pts=9, span=3.0):
+    th = result.x.copy()
+    JtJ = result.jac.T @ result.jac
+    dof = max(len(result.fun) - len(result.x), 1)
+    try:
+        s_i = np.sqrt(max(np.linalg.inv(JtJ)[idx, idx] * 2 * result.cost / dof, 1e-12))
+    except Exception:
+        s_i = abs(th[idx]) * 0.5 + 1e-6
+    lo = max(th[idx] - span * s_i, CP_LO[idx])
+    hi = min(th[idx] + span * s_i, CP_HI[idx])
+    grid = np.linspace(lo, hi, n_pts)
+    chi2 = []
+    mask = np.ones(len(th), dtype=bool); mask[idx] = False
+    for val in grid:
+        def rf(xf):
+            xf_full = th.copy(); xf_full[idx] = val; xf_full[mask] = xf
+            return coupled_residual_vec(xf_full, runs_data)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            r = least_squares(rf, th[mask], method='lm', max_nfev=300)
+        chi2.append(2 * r.cost)
+    return grid, np.array(chi2)
+
+
+# ─── Fix 4: Optimal experimental design ───
+
+def fim_for_times(params, w_list, tau_times, sigma=0.02, eps=1e-4):
+    tau_times = np.asarray(tau_times); nt = len(tau_times); np_ = len(params)
+    J = np.zeros((nt * len(w_list), np_))
+    for wi, w in enumerate(w_list):
+        h0 = solve_coupled_ode(params, w, tau_times)
+        for p in range(np_):
+            pp = list(params); pp[p] += max(abs(params[p]) * eps, 1e-8)
+            hp = solve_coupled_ode(pp, w, tau_times)
+            J[wi * nt:(wi + 1) * nt, p] = (hp - h0) / max(abs(params[p]) * eps, 1e-8)
+    return J.T @ J / sigma ** 2
+
+
+def greedy_d_optimal(params, w_list, n_meas, tau_grid, sigma=0.02):
+    sel, rem = [], list(tau_grid)
+    for _ in range(n_meas):
+        best_ld, best_t = -np.inf, None
+        for t in rem:
+            try:
+                s, ld = np.linalg.slogdet(fim_for_times(params, w_list, sorted(sel + [t]), sigma))
+                if s > 0 and ld > best_ld:
+                    best_ld, best_t = ld, t
+            except Exception:
+                continue
+        if best_t is not None:
+            sel.append(best_t); rem.remove(best_t)
+    return sorted(sel)
+
+
+def spin_ratio_sweep(params, n_meas, sigma=0.02, ratios=None):
+    if ratios is None:
+        ratios = np.linspace(1.1, 3.0, 15)
+    n_e = max(1, int(0.5 * n_meas)); n_l = n_meas - n_e
+    ft = np.concatenate([np.linspace(0.01, 0.2, n_e),
+                         np.linspace(0.25, 0.95, n_l) if n_l else []])
+    out = []
+    for r in ratios:
+        try:
+            FIM = fim_for_times(params, [1.0, r], ft, sigma)
+            ev = eigvalsh(FIM)
+            s, ld = np.linalg.slogdet(FIM)
+            out.append(dict(ratio=r, logdet=ld if s > 0 else -np.inf,
+                            minev=ev[0], cond=ev[-1] / max(ev[0], 1e-15)))
+        except Exception:
+            out.append(dict(ratio=r, logdet=-np.inf, minev=0, cond=np.inf))
+    return out
+
+
+# ─── Fix 5: Causality-respecting reweighting ───
+
+def causal_physics_weights(tau, epoch, n_epochs, mode='exp'):
+    if mode == 'none':
+        return torch.ones_like(tau)
+    if mode == 'exp':
+        return torch.exp(-3.0 * tau)
+    if mode == 'progressive':
+        tmax = 0.2 + 0.8 * epoch / max(n_epochs, 1)
+        return (tau < tmax).float() + 0.01
+    return torch.ones_like(tau)
+
+
+# ─── Coupled-data generator (self-consistency test) ───
+
+def generate_coupled_data(params, w_list, n_meas, noise_std, seed=42):
+    rng = np.random.default_rng(seed)
+    td = np.linspace(0, 1, 500)
+    runs = []
+    for w in w_list:
+        ht = solve_coupled_ode(params, w, td)
+        be = np.linspace(0, 1, n_meas + 1)
+        tg = np.array([rng.uniform(be[k], be[k + 1]) for k in range(n_meas)])
+        idx = np.sort(np.unique([np.argmin(np.abs(td - t)) for t in tg]))
+        hs = ht[idx]
+        runs.append(dict(w=w, tau_s=td[idx],
+                         h_meas=np.clip(hs + rng.normal(0, noise_std, len(idx)) * hs, 1e-4, None),
+                         h_true=ht, tau_dense=td))
+        Psi_t, E_t = coupled_psie_from_h(params, ht)
+        runs[-1]['Psi_true'] = Psi_t
+        runs[-1]['E_true'] = E_t
+    return runs
 
 # ─────────────────────────── Helper: tau sampling ───────────────────────────
 def sample_tau(n, early_frac, rng):   # early_frac of points forced into tau<0.2 (the leverage window)
