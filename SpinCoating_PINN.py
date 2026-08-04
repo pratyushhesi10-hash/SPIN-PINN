@@ -76,21 +76,50 @@ CP_LO = [1e-3, 0.1, 1e-3, 0.0, 0.30]
 CP_HI = [10.0, 8.0, 10.0, 5.0, 0.95]
 
 
-def coupled_residual_vec(params, runs_data):
-    res = []
-    for run in runs_data:
-        h_pred = solve_coupled_ode(params, run['w'], run['tau_s'])
-        if np.any(np.isnan(h_pred)):
-            return np.full(sum(len(r['h_meas']) for r in runs_data), 1e6)
-        res.append((h_pred - run['h_meas']) / max(np.std(run['h_meas']), 1e-4))
-    return np.concatenate(res)
+# ═══════════ ROBUST COUPLED FIT (replaces fit_coupled_model) ═══════════
+NOISE_REL = 0.02
 
+def _unpack(theta):
+    lP, lg, lE, ld, zc = theta
+    return [float(np.exp(lP)), min(float(np.exp(lg)), 4.0),   # gamma capped: physical + stiff-safe
+            float(np.exp(lE)), float(np.exp(ld)),
+            0.05 + 0.93 / (1.0 + np.exp(-zc))]               # c0 in (0.05, 0.98)
 
-def fit_coupled_model(runs_data, p0):
-    return least_squares(
-        coupled_residual_vec, x0=p0, bounds=(CP_LO, CP_HI),
-        args=(runs_data,), method='trf', xtol=1e-10, ftol=1e-10, max_nfev=3000,
-    )
+def _resid(theta, runs, noise_rel):
+    p = _unpack(theta)
+    out = []
+    for r in runs:
+        sol = solve_ivp(lambda t, h: coupled_rhs(t, h, p, r['w']),
+                        (0, 1), [1.0], t_eval=r['tau_s'],
+                        method='LSODA', rtol=1e-8, atol=1e-10)
+        if not sol.success:
+            return np.full(sum(len(q['tau_s']) for q in runs), 50.0)
+        sig = noise_rel * np.clip(r['h_meas'], 1e-3, None)   # noise sigma, NOT std(h)
+        out.append((sol.y[0] - r['h_meas']) / sig)
+    return np.concatenate(out)
+
+def fit_coupled_robust(runs, p0, n_starts=8, noise_rel=NOISE_REL, seed=1):
+    rng = np.random.default_rng(seed)
+    x0 = (p0[4] - 0.05) / 0.93
+    starts = [np.array([np.log(p0[0]), np.log(p0[1]), np.log(p0[2]),
+                        np.log(max(p0[3], 1e-3)), np.log(x0 / (1 - x0))])]
+    starts += [rng.uniform(-1.5, 1.5, 5) for _ in range(n_starts - 1)]
+    best = None
+    for th0 in starts:
+        r = least_squares(_resid, th0, args=(runs, noise_rel), method='trf',
+                          ftol=1e-8, xtol=1e-10, gtol=1e-8, max_nfev=4000)
+        if best is None or r.cost < best.cost:
+            best = r
+    return best
+
+# Backward-compat wrapper for profile_likelihood (uses physical params, fixed noise_rel)
+def coupled_residual_vec(params, runs_data, noise_rel=NOISE_REL):
+    # Convert physical params to log-space for _resid
+    x0 = (params[4] - 0.05) / 0.93
+    theta = np.array([np.log(max(params[0], 1e-10)), np.log(max(params[1], 1e-10)),
+                      np.log(max(params[2], 1e-10)), np.log(max(params[3], 1e-10)),
+                      np.log(x0 / max(1 - x0, 1e-10))])
+    return _resid(theta, runs_data, noise_rel)
 
 
 # ─── Fix 3: Formal identifiability ───
@@ -1286,9 +1315,23 @@ with tb[7]:
         with cr:
             # ── ① Fit ──
             if fit_btn:
-                with st.spinner("Fitting coupled model via exact ODE + least-squares…"):
-                    result = fit_coupled_model(runs_ode, p0)
-                    st.session_state['ode_result'] = result
+                with st.spinner("Fitting coupled model via robust multi-start ODE + least-squares…"):
+                    result = fit_coupled_robust(runs_ode, p0, n_starts=8)
+                    # Unpack the log-parameter result back to physical space
+                    theta_opt = _unpack(result.x)
+                    # Attach termination message for self-consistency reporting
+                    result.message = getattr(result, 'message', '')
+                    # Create a wrapper object that looks like the old result (x, cost, fun, jac, etc.)
+                    class FitResult:
+                        def __init__(self, inner, theta_phys):
+                            self.x = np.array(theta_phys)
+                            self.cost = inner.cost
+                            self.fun = inner.fun
+                            self.jac = inner.jac
+                            self.nfev = inner.nfev
+                            self.success = inner.success
+                            self.message = inner.message
+                    st.session_state['ode_result'] = FitResult(result, theta_opt)
                     st.session_state['ode_ident'] = None
                     st.session_state['ode_profile'] = None
                     st.session_state['ode_oed_result'] = None
@@ -1299,6 +1342,9 @@ with tb[7]:
                 c1, c2, c3, c4, c5 = st.columns(5)
                 for i, c in enumerate([c1, c2, c3, c4, c5]):
                     c.metric(CP_NAMES[i], f"{result.x[i]:.4f}")
+                # Termination message (self-consistency test)
+                term_msg = getattr(result, 'message', '')
+                st.caption(f"Termination: {term_msg}" if term_msg else "")
                 st.caption(f"χ² = {2*result.cost:.2f}  ·  RMSE = {np.sqrt(np.mean(result.fun**2)):.4f}  "
                            f"·  {result.nfev} function evaluations")
 
