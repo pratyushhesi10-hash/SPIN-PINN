@@ -311,7 +311,7 @@ def _sample_tau(n_meas, dense_early, early_frac, early_span, seed):
     return np.array(pts)
 
 @st.cache_data
-def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed,
+def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, noise_code, n_colloc, seed,
                   dense_early=False, early_frac=0.5, early_span=0.2):
     rng = np.random.default_rng(seed); torch.manual_seed(seed)
     tau = np.linspace(0, 1, 500); w_ref = rpm_a
@@ -322,7 +322,11 @@ def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc,
         K_true.append((w**2) * psi_A*np.exp(-psi_d*tau))
         tgt = _sample_tau(n_meas, dense_early, early_frac, early_span, seed)
         idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tgt]))
-        h_s = h[idx]; meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
+        h_s = h[idx]
+        if noise_code == "rel":
+            meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
+        else:
+            meas = np.clip(h_s + rng.normal(0, noise, len(idx)), 1e-4, None)
         runs.append(dict(rpm=rpm, w=w, h=h, tau_s=tau[idx], h_meas=meas,
                          tau_c=np.sort(rng.uniform(0, 1, n_colloc))))
     return dict(tau=tau, runs=runs, K_true=K_true,
@@ -505,7 +509,23 @@ with st.sidebar.expander("Physics", expanded=True):
     rpm_b = st.slider("Run B · RPM", 1000, 6000, 4500, 100)
 with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
     n_meas  = st.slider("Measurements / run", 4, 24, 8)
-    noise   = st.slider("Noise σ", 0.0, 0.10, 0.02, 0.005)
+
+    noise_model = st.radio(
+        "Noise model",
+        ["Proportional (relative)", "Absolute (constant)"],
+        help="Proportional: meas = h·(1+ε) → fixed % error at all τ. "
+             "Absolute: meas = h + ε → constant detector precision, so the "
+             "relative error blows up as the film thins.")
+
+    if noise_model.startswith("Proportional"):
+        noise = st.select_slider("Noise σ_rel", [0.005, 0.01, 0.02, 0.03, 0.05, 0.10], 0.02,
+                                 format_func=lambda x: f"{x*100:.1f}%")
+        noise_code = "rel"
+    else:
+        noise = st.select_slider("Noise σ_abs", [0.001, 0.005, 0.01, 0.02, 0.05], 0.005,
+                                 format_func=lambda x: f"{x:.3f}")
+        noise_code = "abs"
+
     n_colloc = st.slider("Collocation points", 50, 400, 200, 10)
     seed = st.number_input("Seed", 0, 999, 42)
     dense_early = st.checkbox("Dense early sampling (viscosity window)", value=False,
@@ -551,7 +571,7 @@ train_btn = st.sidebar.button("Train PINN", use_container_width=True, key="train
 for k in ("data", "nets", "hist"):
     st.session_state.setdefault(k, None)
 if gen_btn:
-    st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, n_colloc, seed,
+    st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, noise_code, n_colloc, seed,
                                           dense_early=dense_early, early_frac=early_frac, early_span=early_span)
     st.session_state.nets = st.session_state.hist = None
 
