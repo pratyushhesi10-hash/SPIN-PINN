@@ -781,7 +781,8 @@ if gen_btn:
     st.session_state.nets = st.session_state.hist = None
 
 # ─────────────────────────── Tabs ───────────────────────────
-tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV", "Model", "Fixes Lab"])
+tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV",
+              "Model", "Fixes Lab", "ODE Lab"])
 
 # ---------- 0 · PHYSICS ----------
 with tb[0]:
@@ -1227,3 +1228,144 @@ with tb[6]:
         if bb[1].button("Clear sweep results", key="clrsw"):
             st.session_state.pop("sweep_rows", None); st.session_state.pop("sweep_best", None); st.rerun()
         st.caption(f"Best so far: {st.session_state.get('sweep_best', (None,'—'))[1]}")
+
+# ─────────────────────────── ODE LAB ───────────────────────────
+with tb[7]:
+    st.markdown("#### ODE Lab — Concentration-Coupled Model")
+    st.caption("Meyerhofer-type physics with exact ODE solve, formal identifiability, and optimal design.")
+
+    # --- Sidebar / top controls ---
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        n_meas = st.number_input("Measurements per run", 5, 50, 12, 1)
+    with c2:
+        noise_std = st.number_input("Noise std (fraction)", 0.0, 0.2, 0.02, 0.005)
+    with c3:
+        seed_val = st.number_input("RNG seed", 0, 9999, 42, 1)
+    with c4:
+        w_list = [float(st.number_input("ω₁", 0.1, 10.0, 1.0, 0.1)),
+                  float(st.number_input("ω₂", 0.1, 10.0, 3.0, 0.1))]
+
+    col_gen, col_fit, col_id, col_opt = st.tabs(["Generate Data", "Fit Model", "Identifiability", "Optimal Design"])
+
+    # --- Tab 0: Generate Data ---
+    with col_gen:
+        st.markdown("##### Generate Coupled-Physics Data")
+        if st.button("Generate synthetic data", use_container_width=True):
+            params_true = [1.0, 2.0, 0.5, 1.0, 0.6]  # Ψ₀, γ, E₀, δ, c₀
+            runs = generate_coupled_data(params_true, w_list, n_meas, noise_std, seed_val)
+            st.session_state["ode_runs"] = runs
+            st.session_state["ode_params_true"] = params_true
+            st.success(f"Generated {len(runs)} runs with true params: Ψ₀={params_true[0]}, γ={params_true[1]}, E₀={params_true[2]}, δ={params_true[3]}, c₀={params_true[4]}")
+
+        if st.session_state.get("ode_runs"):
+            runs = st.session_state["ode_runs"]
+            for i, run in enumerate(runs):
+                st.markdown(f"**Run {i+1}** (ω={run['w']})")
+                fig, ax = plt.subplots()
+                ax.plot(run["tau_dense"], run["h_true"], "k-", label="True h(τ)")
+                ax.scatter(run["tau_s"], run["h_meas"], c="r", s=20, label="Noisy meas")
+                ax.set_xlabel("τ"); ax.set_ylabel("h"); ax.legend()
+                st.pyplot(fig)
+                plt.close(fig)
+
+    # --- Tab 1: Fit Model ---
+    with col_fit:
+        st.markdown("##### Fit Coupled ODE Model")
+        p0_default = [0.5, 1.5, 0.3, 0.8, 0.5]
+        p0 = st.text_input("Initial guess (Ψ₀,γ,E₀,δ,c₀)", ", ".join(map(str, p0_default)))
+        if st.button("Fit model", use_container_width=True):
+            if st.session_state.get("ode_runs") is None:
+                st.warning("Generate data first."); st.stop()
+            try:
+                p0_arr = [float(x.strip()) for x in p0.split(",")]
+                if len(p0_arr) != 5: raise ValueError
+            except Exception:
+                st.error("Invalid initial guess. Use 5 comma-separated numbers."); st.stop()
+            with st.spinner("Fitting..."):
+                res = fit_coupled_model(st.session_state["ode_runs"], p0_arr)
+                st.session_state["ode_result"] = res
+                st.success(f"Optimization success: {res.success}, cost={res.cost:.6f}")
+                st.json(dict(zip(CP_NAMES, res.x.tolist())))
+
+        if st.session_state.get("ode_result"):
+            res = st.session_state["ode_result"]
+            st.markdown("##### Fitted trajectory vs measurements")
+            runs = st.session_state["ode_runs"]
+            for i, run in enumerate(runs):
+                h_pred = solve_coupled_ode(res.x, run["w"], run["tau_dense"])
+                fig, ax = plt.subplots()
+                ax.plot(run["tau_dense"], run["h_true"], "k--", alpha=0.5, label="True")
+                ax.scatter(run["tau_s"], run["h_meas"], c="r", s=20, alpha=0.7, label="Meas")
+                ax.plot(run["tau_dense"], h_pred, "b-", label="ODE fit")
+                ax.set_xlabel("τ"); ax.set_ylabel("h"); ax.legend(); ax.set_title(f"Run {i+1} (ω={run['w']})")
+                st.pyplot(fig)
+                plt.close(fig)
+
+    # --- Tab 2: Identifiability ---
+    with col_id:
+        st.markdown("##### Formal Identifiability Analysis")
+        if st.session_state.get("ode_result") is None:
+            st.warning("Fit the model first."); st.stop()
+        res = st.session_state["ode_result"]
+        id_res = compute_identifiability(res)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Parameter std errors**")
+            for name, val in zip(CP_NAMES, id_res["pstd"]):
+                st.metric(name, f"{val:.4f}" if np.isfinite(val) else "nan")
+        with c2:
+            st.markdown("**Correlation matrix**")
+            fig, ax = plt.subplots(figsize=(5,4))
+            im = ax.imshow(id_res["corr"], cmap="RdBu_r", vmin=-1, vmax=1)
+            ax.set_xticks(range(len(CP_NAMES))); ax.set_yticks(range(len(CP_NAMES)))
+            ax.set_xticklabels(CP_NAMES, rotation=45, ha="right")
+            ax.set_yticklabels(CP_NAMES)
+            for i in range(len(CP_NAMES)):
+                for j in range(len(CP_NAMES)):
+                    v = id_res["corr"][i,j]
+                    if np.isfinite(v):
+                        ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=8, color="white" if abs(v)>0.5 else "black")
+            plt.colorbar(im, ax=ax); plt.tight_layout()
+            st.pyplot(fig); plt.close(fig)
+        st.caption(f"Condition number: {id_res['cond']:.2e}, χ²={id_res['chi2']:.2f}, σ²={id_res['sigma2']:.4f}")
+
+        st.markdown("##### Profile Likelihood")
+        idx_map = {name:i for i,name in enumerate(CP_NAMES)}
+        sel = st.selectbox("Select parameter", CP_NAMES)
+        if st.button("Compute profile", key="prof_btn"):
+            grid, chi2 = profile_likelihood(res, st.session_state["ode_runs"], idx_map[sel])
+            fig, ax = plt.subplots()
+            ax.plot(grid, chi2, "bo-")
+            ax.axvline(res.x[idx_map[sel]], c="r", ls="--", label="MLE")
+            ax.set_xlabel(sel); ax.set_ylabel("χ²"); ax.legend()
+            st.pyplot(fig); plt.close(fig)
+
+    # --- Tab 3: Optimal Design ---
+    with col_opt:
+        st.markdown("##### D-Optimal Measurement Times")
+        if st.session_state.get("ode_params_true") is None and st.session_state.get("ode_result") is None:
+            st.warning("Need true params or fitted result."); st.stop()
+        params_ref = st.session_state.get("ode_params_true") or st.session_state["ode_result"].x
+        tau_grid = np.linspace(0.01, 0.99, 50)
+        c1, c2 = st.columns(2)
+        with c1:
+            n_meas_opt = st.number_input("Num measurement times", 3, 20, 8, 1)
+        with c2:
+            ratios = st.text_input("Spin ratios to test (comma-sep)", "1.0, 2.0, 3.0")
+        if st.button("Compute optimal times", use_container_width=True):
+            try:
+                ratio_list = [float(x.strip()) for x in ratios.split(",")]
+            except Exception:
+                st.error("Invalid ratios"); st.stop()
+            sel_times = greedy_d_optimal(params_ref, ratio_list, n_meas_opt, tau_grid)
+            st.success(f"Selected times: {sel_times}")
+            st.markdown("##### Ratio sweep")
+            sweep_out = spin_ratio_sweep(params_ref, n_meas_opt, ratios=ratio_list)
+            df_sweep = pd.DataFrame(sweep_out)
+            st.dataframe(df_sweep, use_container_width=True)
+            fig, ax = plt.subplots()
+            ax.plot(df_sweep["ratio"], df_sweep["logdet"], "bo-")
+            ax.set_xlabel("Spin ratio ω₂/ω₁"); ax.set_ylabel("log det(FIM)")
+            st.pyplot(fig); plt.close(fig)
+
