@@ -1304,12 +1304,13 @@ with tb[7]:
                                 disabled=st.session_state.get('ode_result') is None)
             st.markdown("---")
             gen_coup = st.button("Generate Coupled-Model Data (self-test)", use_container_width=True, key='ode_gen')
+            # ── A) Generation auto-ticks self-test, so ① uses the fresh data ──
             if gen_coup:
                 w_list = [r['w'] for r in runs_ode]
                 st.session_state.data_coupled = generate_coupled_data(p0, w_list, 8, 0.02)
-                st.session_state.coupled_truth = [float(x) for x in p0]   # ← lock in the truth
-                st.success("Truth locked at current slider values. Now set sliders to a "
-                           "DIFFERENT guess, tick Self-test, hit ①.")
+                st.session_state.coupled_truth = [float(x) for x in p0]
+                st.session_state['ode_selftest'] = True        # ← auto-tick
+                st.success("Coupled data generated (truth = sliders). Self-test auto-enabled.")
             selftest = st.checkbox("Self-test mode (fit generated coupled data)", key='ode_selftest',
                                    disabled=st.session_state.get('data_coupled') is None)
 
