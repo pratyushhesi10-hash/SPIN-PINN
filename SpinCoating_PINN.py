@@ -1354,6 +1354,12 @@ with tb[7]:
                 term_msg = getattr(result, 'message', '')
                 st.caption(f"{term_msg} · χ²={2*result.cost:.2f} · {result.nfev} fevals" if term_msg else f"χ²={2*result.cost:.2f} · {result.nfev} fevals")
 
+                # ── Sanity check: χ² at true params (self-test only) ──
+                if st.session_state.get('coupled_truth') is not None:
+                    th_true = _theta_of(st.session_state['coupled_truth'])
+                    chi2_true = float(np.sum(_resid(th_true, runs_fit, 0.02) ** 2))
+                    st.caption(f"sanity: χ² at TRUE params = {chi2_true:.1f} (should be ≈ n_data ≈ {len(runs_fit)*8})")
+
                 td = np.linspace(0, 1, 500)
                 # h-fit panels: solve with PHYS, not result.x
                 #   h_fit = solve_coupled_ode(phys, run['w'], td)
