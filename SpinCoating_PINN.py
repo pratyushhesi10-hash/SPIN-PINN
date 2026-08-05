@@ -79,40 +79,54 @@ CP_HI = [10.0, 8.0, 10.0, 5.0, 0.95]
 # ═══════════ ROBUST COUPLED FIT (replaces fit_coupled_model) ═══════════
 NOISE_REL = 0.02
 
-def _unpack(theta):
+def _unpack(theta):   # REPLACES previous _unpack
     lP, lg, lE, ld, zc = theta
-    return [float(np.exp(lP)), min(float(np.exp(lg)), 4.0),   # gamma capped: physical + stiff-safe
-            float(np.exp(lE)), float(np.exp(ld)),
-            0.05 + 0.93 / (1.0 + np.exp(-zc))]               # c0 in (0.05, 0.98)
+    return [float(np.exp(lP)), min(float(np.exp(lg)), 4.0),
+            float(np.exp(lE)), min(float(np.exp(ld)), 4.0),
+            0.5 + 0.45 / (1.0 + np.exp(-zc))]          # c0 in [0.5, 0.95]
+
+def _theta_of(p):
+    u = np.clip((p[4] - 0.5) / 0.45, 0.02, 0.98)
+    return [np.log(p[0]), np.log(p[1]), np.log(p[2]),
+            np.log(max(p[3], 0.02)), np.log(u / (1 - u))]
+
+TH_LO = [np.log(0.05), np.log(0.2), np.log(0.1), -4.0, -4.0]
+TH_HI = [np.log(5.0),  np.log(4.0), np.log(5.0),  np.log(4.0), 4.0]
+
+def solve_coupled_rk4(params, w, tau_eval, n_steps=500):
+    """Fixed-step RK4: smooth in parameters (no adaptive-step kinks)."""
+    Psi0, gamma, E0, delta, c0 = params
+    h_floor = (1.0 - c0) + 1e-6
+    ts = np.linspace(tau_eval[0], tau_eval[-1], n_steps + 1); dt = ts[1] - ts[0]
+    def f(hv):
+        hc = max(hv, h_floor)
+        conv = (w * w) * Psi0 * hc ** (3.0 - gamma)
+        c = max(1.0 - (1.0 - c0) / hc, 1e-10)
+        return -conv - E0 * (c / c0) ** delta
+    h, hs = 1.0, [1.0]
+    for _ in range(n_steps):
+        k1 = f(h); k2 = f(h + .5*dt*k1); k3 = f(h + .5*dt*k2); k4 = f(h + dt*k3)
+        h += dt * (k1 + 2*k2 + 2*k3 + k4) / 6
+        hs.append(h)
+    return np.interp(tau_eval, ts, np.array(hs))
 
 def _resid(theta, runs, noise_rel):
-    p = _unpack(theta)
-    out = []
+    p = _unpack(theta); out = []
     for r in runs:
-        sol = solve_ivp(lambda t, h: coupled_rhs(t, h, p, r['w']),
-                        (0, 1), [1.0], t_eval=r['tau_s'],
-                        method='LSODA', rtol=1e-8, atol=1e-10)
-        if not sol.success:
-            return np.full(sum(len(q['tau_s']) for q in runs), 50.0)
-        sig = noise_rel * np.clip(r['h_meas'], 1e-3, None)   # noise sigma, NOT std(h)
-        out.append((sol.y[0] - r['h_meas']) / sig)
+        sig = noise_rel * np.maximum(r['h_meas'], 0.03)   # floor caps late-time amplification
+        out.append((solve_coupled_rk4(p, r['w'], r['tau_s']) - r['h_meas']) / sig)
     return np.concatenate(out)
 
-def fit_coupled_robust(runs, p0, n_starts=8, noise_rel=NOISE_REL, seed=1):
-    # ── B) Bound the theta-space in fit_coupled_robust (kills the c₀ runaway) ──
-    TH_LO = [-6.9, -2.3, -6.9, -8.0, -4.0]   # Ψ₀∈[1e-3,10] γ∈[0.1,4] E₀∈[1e-3,10] δ∈[~0,8] c₀∈[0.07,0.96]
-    TH_HI = [ 2.3,  1.4,  2.3,  2.1,  4.0]
+def fit_coupled_robust(runs, p0, noise_rel=NOISE_REL, n_starts=10, seed=1):
     rng = np.random.default_rng(seed)
-    x0 = (p0[4] - 0.05) / 0.93
-    starts = [np.array([np.log(p0[0]), np.log(p0[1]), np.log(p0[2]),
-                        np.log(max(p0[3], 1e-3)), np.log(x0 / (1 - x0))])]
-    starts += [rng.uniform(-1.5, 1.5, 5) for _ in range(n_starts - 1)]
+    starts = [np.clip(_theta_of(p0), TH_LO, TH_HI)]
+    starts += [rng.uniform(TH_LO, TH_HI) for _ in range(n_starts - 1)]
     best = None
-    for th0 in starts:
-        r = least_squares(_resid, th0, bounds=(TH_LO, TH_HI), args=(runs, noise_rel),
-                          method='trf', ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=6000)
-        if best is None or r.cost < best.cost:
-            best = r
+    for s in starts:
+        r = least_squares(_resid, s, bounds=(TH_LO, TH_HI), args=(runs, noise_rel),
+                          method='trf', xtol=1e-12, ftol=1e-12, gtol=1e-8,
+                          diff_step=1e-5, max_nfev=2000)
+        if best is None or r.cost < best.cost: best = r
     return best
 
 # Backward-compat wrapper for profile_likelihood (uses physical params, fixed noise_rel)
