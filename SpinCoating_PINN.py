@@ -1323,42 +1323,36 @@ with tb[7]:
             if fit_btn:
                 runs_fit = st.session_state.data_coupled if selftest else runs_ode
                 truth = st.session_state.get('coupled_truth') if selftest else None
-                with st.spinner("Fitting coupled model (exact ODE + least-squares)…"):
+                with st.spinner("Fitting coupled model (exact ODE, bounded params)…"):
                     result = fit_coupled_robust(runs_fit, p0)
-                st.session_state.update(ode_result=result, ode_runs_fit=runs_fit,
-                                        ode_truth=truth, ode_ident=None,
-                                        ode_profile=None, ode_oed_result=None)
+                phys = _unpack(result.x)                       # ← physical params
+                st.session_state.update(ode_result=result, ode_phys=phys,
+                                        ode_runs_fit=runs_fit, ode_truth=truth,
+                                        ode_ident=None, ode_profile=None)
 
             result = st.session_state.get('ode_result')
-            if result is not None:
+            phys = st.session_state.get('ode_phys')
+            if result is not None and phys is not None:
                 st.markdown("##### ① Coupled-Model Fit")
-                c1, c2, c3, c4, c5 = st.columns(5)
-                for i, c in enumerate([c1, c2, c3, c4, c5]):
-                    c.metric(CP_NAMES[i], f"{result.x[i]:.4f}")
+                for i, c in enumerate(st.columns(5)):
+                    c.metric(['Ψ₀','γ','E₀','δ','c₀'][i], f"{phys[i]:.4f}")
                 # Termination message (self-consistency test)
                 term_msg = getattr(result, 'message', '')
-                st.caption(f"Termination: {term_msg}" if term_msg else "")
-                st.caption(f"χ² = {2*result.cost:.2f}  ·  RMSE = {np.sqrt(np.mean(result.fun**2)):.4f}  "
-                           f"·  {result.nfev} function evaluations")
+                st.caption(f"{term_msg} · χ²={2*result.cost:.2f} · {result.nfev} fevals" if term_msg else f"χ²={2*result.cost:.2f} · {result.nfev} fevals")
 
-                # Self-test recovery report
-                truth = st.session_state.get('ode_truth')
-                if truth is not None:
-                    df_rec = pd.DataFrame({
-                        'param': ['Ψ₀', 'γ', 'E₀', 'δ', 'c₀'],
-                        'true': truth,
-                        'recovered': np.round(result.x, 3),
-                        'err %': np.round(100*np.abs(np.array(result.x)-np.array(truth))/np.array(truth), 1),
-                    })
-                    st.markdown("##### Self-test recovery")
-                    st.dataframe(df_rec, use_container_width=True, hide_index=True)
-                    r0 = st.session_state['ode_runs_fit'][0]; td = r0['tau_dense']
-                    Psi_fit, E_fit = coupled_psie_from_h(result.x, solve_coupled_ode(result.x, r0['w'], td))
-                    figT, axT = plt.subplots(1, 2, figsize=(10, 3.5))
-                    axT[0].plot(td, r0['Psi_true'], 'b--', label='true Ψ'); axT[0].plot(td, Psi_fit, 'r-', label='rec Ψ')
-                    axT[1].plot(td, r0['E_true'], 'b--', label='true E');  axT[1].plot(td, E_fit, 'r-', label='rec E')
-                    for a in axT: a.legend(fontsize=8); a.grid(alpha=.3)
-                    st.pyplot(figT); plt.close(figT)
+                td = np.linspace(0, 1, 500)
+                # h-fit panels: solve with PHYS, not result.x
+                #   h_fit = solve_coupled_ode(phys, run['w'], td)
+                # Ψ/Ẽ panels:
+                Psi_fit, E_fit = coupled_psie_from_h(phys, solve_coupled_ode(phys, 1.0, td))
+                if st.session_state.get('ode_truth') is not None:          # self-test truth
+                    t = np.array(st.session_state['ode_truth'])
+                    Psi_tr, E_tr = coupled_psie_from_h(t, solve_coupled_ode(t, 1.0, td))
+                    st.dataframe(pd.DataFrame({'param': ['Ψ₀','γ','E₀','δ','c₀'], 'true': t,
+                                 'recovered': np.round(phys, 4),
+                                 'err %': np.round(100*np.abs(phys-t)/t, 1)}), hide_index=True)
+                elif truth_available:                                      # exponential truth
+                    Psi_tr, E_tr = d['psi'], d['e']
 
                 # Plot fit vs data
                 fig, axes = plt.subplots(1, len(runs_ode), figsize=(5 * len(runs_ode), 3.5),
