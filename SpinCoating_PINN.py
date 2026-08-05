@@ -99,6 +99,9 @@ def _resid(theta, runs, noise_rel):
     return np.concatenate(out)
 
 def fit_coupled_robust(runs, p0, n_starts=8, noise_rel=NOISE_REL, seed=1):
+    # ── B) Bound the theta-space in fit_coupled_robust (kills the c₀ runaway) ──
+    TH_LO = [-6.9, -2.3, -6.9, -8.0, -4.0]   # Ψ₀∈[1e-3,10] γ∈[0.1,4] E₀∈[1e-3,10] δ∈[~0,8] c₀∈[0.07,0.96]
+    TH_HI = [ 2.3,  1.4,  2.3,  2.1,  4.0]
     rng = np.random.default_rng(seed)
     x0 = (p0[4] - 0.05) / 0.93
     starts = [np.array([np.log(p0[0]), np.log(p0[1]), np.log(p0[2]),
@@ -106,8 +109,8 @@ def fit_coupled_robust(runs, p0, n_starts=8, noise_rel=NOISE_REL, seed=1):
     starts += [rng.uniform(-1.5, 1.5, 5) for _ in range(n_starts - 1)]
     best = None
     for th0 in starts:
-        r = least_squares(_resid, th0, args=(runs, noise_rel), method='trf',
-                          ftol=1e-8, xtol=1e-10, gtol=1e-8, max_nfev=4000)
+        r = least_squares(_resid, th0, bounds=(TH_LO, TH_HI), args=(runs, noise_rel),
+                          method='trf', ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=6000)
         if best is None or r.cost < best.cost:
             best = r
     return best
