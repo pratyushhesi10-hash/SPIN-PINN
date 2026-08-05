@@ -827,8 +827,7 @@ if gen_btn:
     st.session_state.nets = st.session_state.hist = None
 
 # ─────────────────────────── Tabs ───────────────────────────
-tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV",
-              "Model", "Fixes Lab", "ODE Lab"])
+tb = st.tabs(["Physics", "Data", "Train", "Results", "Manual / CSV", "Model", "Fixes Lab"])
 
 # ---------- 0 · PHYSICS ----------
 with tb[0]:
@@ -1250,265 +1249,109 @@ def run_sweep(configs, epochs, w_m):
         slot.dataframe(pd.DataFrame(st.session_state.sweep_rows), use_container_width=True)
     prg.progress(1.0); ph.caption("sweep complete")
 
-with tb[6]:
-    st.markdown("#### Fixes Lab — individual & combined mitigation sweeps")
-    st.caption("Needs loaded data (synthetic recommended; manual data has no Ψ/E truth to score against). "
-               "Exhaustive = all 60 pruned combinations — heavy on CPU; keep combo epochs low.")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: ep_ind = st.number_input("epochs · individual", 200, 4000, 2000, 100)
-    with c2: ep_swp = st.number_input("epochs · combo", 200, 4000, 800, 100)
-    with c3: w_mono = st.slider("mono weight", 0.0, 5.0, 1.0, 0.1)
-    with c4: exhaustive = st.checkbox("exhaustive combos (60)", value=False)
-    if exhaustive:
-        st.warning(f"60 configs × {ep_swp} epochs. ETA is shown live after the first config; "
-                   "on CPU this can take 10–30+ min and the UI will look frozen. Consider ≤800 epochs.")
-    b_ind = st.button("Run individual fixes", use_container_width=True, key="sw_ind")
-    b_cmb = st.button("Run combination sweep (separate)", use_container_width=True, key="sw_combo")
-    if b_ind or b_cmb:
+
+# ═══════════════════ FIXES LAB (clean, unified) ═══════════════════
+    st.markdown("#### Fixes Lab — mitigation sweeps & coupled‑model identifiability")
+    st.caption("Left: PINN training‑side fixes (dense‑early, Ψ‑parametric, monotonicity, 1/h³, Ẽ‑fixing, causal). "
+               "Right: concentration‑coupled ODE with exact solve + formal identifiability (Fixes 1–4). "
+               "Synthetic data recommended for scoring Ψ/Ẽ.")
+    lab = st.radio("Lab", ["PINN mitigation sweeps", "Coupled ODE lab"], horizontal=True)
+
+    if lab == "PINN mitigation sweeps":
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: ep_ind = st.number_input("epochs · individual", 200, 4000, 2000, 100)
+        with c2: ep_swp = st.number_input("epochs · combo", 200, 4000, 800, 100)
+        with c3: w_mono = st.slider("mono weight", 0.0, 5.0, 1.0, 0.1)
+        with c4: exhaustive = st.checkbox("exhaustive combos (60)", value=False)
+        if exhaustive:
+            st.warning(f"60 configs × {ep_swp} epochs — heavy on CPU; keep epochs low.")
+        b_ind = st.button("Run individual fixes", use_container_width=True, key="sw_ind")
+        b_cmb = st.button("Run combination sweep", use_container_width=True, key="sw_combo")
+        if b_ind or b_cmb:
+            if st.session_state.data is None:
+                st.warning("Load/generate data first."); st.stop()
+            if b_ind: run_sweep(individual_configs(), int(ep_ind), w_mono)
+            else:     run_sweep(exhaustive_configs() if exhaustive else curated_configs(), int(ep_swp), w_mono)
+            st.rerun()
+        if st.session_state.get("sweep_rows"):
+            df = pd.DataFrame(st.session_state.sweep_rows)
+            if "Ψ%" in df.columns: df = df.sort_values("Ψ%")
+            st.dataframe(df, use_container_width=True)
+            bb = st.columns(3)
+            if bb[0].button("Load best into Results tab", key="ldbest") and st.session_state.get("sweep_best"):
+                st.session_state.nets = st.session_state.sweep_best[2]
+                st.success(f"Loaded best: {st.session_state.sweep_best[1]}")
+            if bb[1].button("Clear sweep", key="clrsw"):
+                st.session_state.pop("sweep_rows", None); st.session_state.pop("sweep_best", None); st.rerun()
+            st.caption(f"Best so far: {st.session_state.get('sweep_best', (None, '—'))[1]}")
+
+    else:  # Coupled ODE lab
         if st.session_state.data is None:
-            st.warning("Load/generate data first."); st.stop()
-        if b_ind: run_sweep(individual_configs(), int(ep_ind), w_mono)
-        else:     run_sweep(exhaustive_configs() if exhaustive else curated_configs(), int(ep_swp), w_mono)
-        st.rerun()
-    if st.session_state.get("sweep_rows"):
-        df = pd.DataFrame(st.session_state.sweep_rows)
-        if "Ψ%" in df.columns: df = df.sort_values("Ψ%")
-        st.dataframe(df, use_container_width=True)
-        bb = st.columns(3)
-        if bb[0].button("Load best sweep into Results tab", key="ldbest") and st.session_state.get("sweep_best"):
-            st.session_state.nets = st.session_state.sweep_best[2]
-            st.success(f"Loaded best: {st.session_state.sweep_best[1]}")
-        if bb[1].button("Clear sweep results", key="clrsw"):
-            st.session_state.pop("sweep_rows", None); st.session_state.pop("sweep_best", None); st.rerun()
-        st.caption(f"Best so far: {st.session_state.get('sweep_best', (None,'—'))[1]}")
-
-# ═══════════════════ ODE LAB TAB ═══════════════════
-with tb[7]:
-    st.markdown("#### ODE Lab — Concentration-Coupled Model & Formal Identifiability")
-    st.markdown("""
-    **Fix 1** · Ψ and E coupled through solvent concentration c(τ) — 5 interpretable scalars replace 6+ free DOFs.  
-    **Fix 2** · Exact ODE integration + Levenberg-Marquardt — zero residual by construction, no loss-weight tuning.  
-    **Fix 3** · FIM eigenspectrum, parameter correlations, profile likelihood — formal identifiability certificate.  
-    **Fix 4** · D-optimal sampling design and spin-speed-ratio sweep.  
-    **Fix 5** · Causality-respecting physics reweighting (added to Fixes Lab as `causal` config).
-    """)
-
-    if st.session_state.data is None:
-        st.info("Load or generate data first (Data / Manual tabs), then return here.")
-    else:
-        d = st.session_state.data
-        runs_ode = d['runs']
-        truth_available = bool(d.get('has_truth', False))
-
-        # ── Left column: controls ──
-        cl, cr = st.columns([1, 2])
-        with cl:
-            st.markdown("##### Initial parameter guesses")
-            p0 = [
-                st.number_input("Ψ₀ (viscosity scale)", 0.01, 10.0, 1.2, 0.1, key='cp_psi0'),
-                st.number_input("γ (visc-conc exponent)", 0.1, 8.0, 2.5, 0.1, key='cp_gam'),
-                st.number_input("E₀ (evap scale)", 0.01, 10.0, 3.0, 0.1, key='cp_e0'),
-                st.number_input("δ (evap-conc exponent)", 0.0, 5.0, 1.0, 0.1, key='cp_del'),
-                st.number_input("c₀ (init solvent frac)", 0.3, 0.95, 0.8, 0.01, key='cp_c0'),
-            ]
-            st.markdown("---")
-            fit_btn = st.button("① Fit Coupled Model (exact ODE)", use_container_width=True, key='ode_fit')
-            fim_btn = st.button("② FIM & Identifiability", use_container_width=True, key='ode_fim',
-                                disabled=st.session_state.get('ode_result') is None)
-            prof_btn = st.button("③ Profile Likelihood (slow)", use_container_width=True, key='ode_prof',
-                                 disabled=st.session_state.get('ode_result') is None)
-            oed_btn = st.button("④ Optimal Experimental Design", use_container_width=True, key='ode_oed',
-                                disabled=st.session_state.get('ode_result') is None)
-            st.markdown("---")
-            gen_coup = st.button("Generate Coupled-Model Data (self-test)", use_container_width=True, key='ode_gen')
-            # ── A) Generation auto-ticks self-test, so ① uses the fresh data ──
-            if gen_coup:
-                w_list = [r['w'] for r in runs_ode]
-                st.session_state.data_coupled = generate_coupled_data(p0, w_list, 8, 0.02)
-                st.session_state.coupled_truth = [float(x) for x in p0]
-                st.session_state['ode_selftest'] = True        # ← auto-tick
-                st.success("Coupled data generated (truth = sliders). Self-test auto-enabled.")
-            selftest = st.checkbox("Self-test mode (fit generated coupled data)", key='ode_selftest',
-                                   disabled=st.session_state.get('data_coupled') is None)
-
-        # ── Right column: results ──
-        with cr:
-            # ── ① Fit ──
-            if fit_btn:
-                runs_fit = st.session_state.data_coupled if selftest else runs_ode
-                truth = st.session_state.get('coupled_truth') if selftest else None
-                with st.spinner("Fitting coupled model (exact ODE, bounded params)…"):
-                    result = fit_coupled_robust(runs_fit, p0)
-                phys = _unpack(result.x)                       # ← physical params
-                st.session_state.update(ode_result=result, ode_phys=phys,
-                                        ode_runs_fit=runs_fit, ode_truth=truth,
-                                        ode_ident=None, ode_profile=None)
-
-            result = st.session_state.get('ode_result')
-            phys = st.session_state.get('ode_phys')
-            if result is not None and phys is not None:
-                st.markdown("##### ① Coupled-Model Fit")
-                for i, c in enumerate(st.columns(5)):
-                    c.metric(['Ψ₀','γ','E₀','δ','c₀'][i], f"{phys[i]:.4f}")
-                # Termination message (self-consistency test)
-                term_msg = getattr(result, 'message', '')
-                st.caption(f"{term_msg} · χ²={2*result.cost:.2f} · {result.nfev} fevals" if term_msg else f"χ²={2*result.cost:.2f} · {result.nfev} fevals")
-
-                # ── Sanity check: χ² at true params (self-test only) ──
-                if st.session_state.get('coupled_truth') is not None:
-                    th_true = _theta_of(st.session_state['coupled_truth'])
-                    chi2_true = float(np.sum(_resid(th_true, runs_fit, 0.02) ** 2))
-                    st.caption(f"sanity: χ² at TRUE params = {chi2_true:.1f} (should be ≈ n_data ≈ {len(runs_fit)*8})")
-
-                td = np.linspace(0, 1, 500)
-                # h-fit panels: solve with PHYS, not result.x
-                #   h_fit = solve_coupled_ode(phys, run['w'], td)
-                # Ψ/Ẽ panels:
-                Psi_fit, E_fit = coupled_psie_from_h(phys, solve_coupled_ode(phys, 1.0, td))
-                if st.session_state.get('ode_truth') is not None:          # self-test truth
-                    t = np.array(st.session_state['ode_truth'])
-                    Psi_tr, E_tr = coupled_psie_from_h(t, solve_coupled_ode(t, 1.0, td))
-                    st.dataframe(pd.DataFrame({'param': ['Ψ₀','γ','E₀','δ','c₀'], 'true': t,
-                                 'recovered': np.round(phys, 4),
-                                 'err %': np.round(100*np.abs(phys-t)/t, 1)}), hide_index=True)
-                elif truth_available:                                      # exponential truth
-                    Psi_tr, E_tr = d['psi'], d['e']
-
-                # Plot fit vs data
-                fig, axes = plt.subplots(1, len(runs_ode), figsize=(5 * len(runs_ode), 3.5),
-                                         squeeze=False)
-                td_plot = np.linspace(0, 1, 500)
-                for i, run in enumerate(runs_ode):
-                    ax = axes[0, i]
-                    h_fit = solve_coupled_ode(result.x, run['w'], td_plot)
-                    ax.plot(td_plot, h_fit, 'r-', lw=2, label='Coupled fit')
-                    ax.scatter(run['tau_s'], run['h_meas'], c='k', s=30, zorder=5, label='Data')
-                    if truth_available and run.get('h') is not None:
-                        ax.plot(d['tau'], run['h'], 'b--', lw=1.5, alpha=0.5, label='True h')
-                    ax.set_xlabel('τ'); ax.set_ylabel('h̃')
-                    ax.set_title(f"Run {i} · ω={run['w']:.2f}")
-                    ax.legend(fontsize=7); ax.grid(alpha=0.3)
-                plt.tight_layout(); st.pyplot(fig); plt.close(fig)
-
-                # Plot recovered Ψ, E
-                fig2, ax2 = plt.subplots(1, 2, figsize=(10, 3.5))
-                Psi_fit, E_fit = coupled_psie_from_h(result.x, solve_coupled_ode(result.x, 1.0, td_plot))
-                ax2[0].plot(td_plot, Psi_fit, 'r-', lw=2, label='Ψ(c(τ)) fit')
-                if truth_available:
-                    ax2[0].plot(d['tau'], d['psi'], 'b--', lw=1.5, label='True Ψ(τ)')
-                ax2[0].set_xlabel('τ'); ax2[0].set_ylabel('Ψ'); ax2[0].set_title('Viscosity Ψ(τ)')
-                ax2[0].legend(fontsize=8); ax2[0].grid(alpha=0.3)
-
-                ax2[1].plot(td_plot, E_fit, 'r-', lw=2, label='E(c(τ)) fit')
-                if truth_available:
-                    ax2[1].plot(d['tau'], d['e'], 'b--', lw=1.5, label='True E(τ)')
-                ax2[1].set_xlabel('τ'); ax2[1].set_ylabel('Ẽ'); ax2[1].set_title('Evaporation Ẽ(τ)')
-                ax2[1].legend(fontsize=8); ax2[1].grid(alpha=0.3)
-                plt.tight_layout(); st.pyplot(fig2); plt.close(fig2)
-
-            # ── ② FIM & Identifiability ──
-            if fim_btn and result is not None:
-                with st.spinner("Computing FIM eigenspectrum…"):
-                    st.session_state['ode_ident'] = compute_identifiability(result)
-
-            ident = st.session_state.get('ode_ident')
-            if ident is not None:
-                st.markdown("##### ② Identifiability Certificate")
-                c1, c2 = st.columns(2)
-                with c1:
-                    fig, ax = plt.subplots(figsize=(4.5, 3.5))
-                    ax.bar(range(len(ident['eigvals'])), ident['eigvals'], color='steelblue')
-                    ax.set_yscale('log'); ax.set_xticks(range(len(CP_NAMES)))
-                    ax.set_xticklabels(CP_NAMES, fontsize=9)
-                    ax.set_ylabel('FIM eigenvalue (log)')
-                    ax.set_title(f"FIM eigenspectrum · cond = {ident['cond']:.1e}")
-                    ax.grid(alpha=0.3); plt.tight_layout(); st.pyplot(fig); plt.close(fig)
-                with c2:
-                    fig, ax = plt.subplots(figsize=(4.5, 3.5))
-                    im = ax.imshow(ident['corr'], vmin=-1, vmax=1, cmap='RdBu_r')
-                    ax.set_xticks(range(len(CP_NAMES))); ax.set_xticklabels(CP_NAMES, fontsize=9)
-                    ax.set_yticks(range(len(CP_NAMES))); ax.set_yticklabels(CP_NAMES, fontsize=9)
-                    for i in range(len(CP_NAMES)):
-                        for j in range(len(CP_NAMES)):
-                            ax.text(j, i, f"{ident['corr'][i,j]:.2f}", ha='center', va='center', fontsize=8)
-                    ax.set_title('Parameter correlation matrix')
-                    plt.colorbar(im, ax=ax, fraction=0.046); plt.tight_layout(); st.pyplot(fig); plt.close(fig)
-
-                # Parameter uncertainties table
-                import pandas as pd
-                df_unc = pd.DataFrame({
-                    'Parameter': CP_NAMES,
-                    'Estimate': result.x,
-                    '± 1σ': ident['pstd'],
-                    'Rel. unc. (%)': ident['pstd'] / np.abs(result.x) * 100,
-                })
-                st.dataframe(df_unc, use_container_width=True, hide_index=True)
-                if ident['cond'] > 1e6:
-                    st.warning(f"⚠️ FIM condition number = {ident['cond']:.1e} — "
-                               "near-singular: at least one parameter direction is practically unidentifiable.")
-                else:
-                    st.success(f"✅ FIM condition number = {ident['cond']:.1e}")
-
-            # ── ③ Profile Likelihood ──
-            if prof_btn and result is not None:
-                with st.spinner("Running profile likelihood (this may take a minute)…"):
-                    profiles = {}
-                    for i in range(len(CP_NAMES)):
-                        g, c2 = profile_likelihood(result, runs_ode, i, n_pts=9)
-                        profiles[i] = (g, c2)
-                    st.session_state['ode_profile'] = profiles
-
-            profiles = st.session_state.get('ode_profile')
-            if profiles is not None:
-                st.markdown("##### ③ Profile Likelihood")
-                chi2_thresh = result.cost * 2 + 3.84  # 95% CI for 1 param
-                fig, axes = plt.subplots(1, 5, figsize=(20, 3.5), squeeze=False)
-                for i in range(5):
-                    g, c2 = profiles[i]
-                    ax = axes[0, i]
-                    ax.plot(g, c2, 'o-', ms=4, lw=1.5)
-                    ax.axhline(chi2_thresh, color='r', ls='--', lw=1, label='95% CI')
-                    ax.axvline(result.x[i], color='gray', ls=':', lw=1)
-                    ax.set_title(CP_NAMES[i], fontsize=10)
-                    ax.set_xlabel('value'); ax.set_ylabel('χ²')
-                    ax.legend(fontsize=6); ax.grid(alpha=0.3)
-                plt.tight_layout(); st.pyplot(fig); plt.close(fig)
-                st.caption("If a profile χ² curve never crosses the red threshold, "
-                           "that parameter's confidence interval is unbounded → practically unidentifiable.")
-
-            # ── ④ Optimal Experimental Design ──
-            if oed_btn and result is not None:
-                with st.spinner("Computing D-optimal design…"):
-                    tau_grid = np.linspace(0.01, 0.99, 40)
-                    w_list = [r['w'] for r in runs_ode]
-                    opt_times = greedy_d_optimal(result.x, w_list, 8, tau_grid)
-                    sweep = spin_ratio_sweep(result.x, 8)
-                    st.session_state['ode_oed_result'] = dict(opt_times=opt_times, sweep=sweep)
-
-            oed = st.session_state.get('ode_oed_result')
-            if oed is not None:
-                st.markdown("##### ④ Optimal Experimental Design")
-                c1, c2 = st.columns(2)
-                with c1:
-                    fig, ax = plt.subplots(figsize=(5, 3.5))
-                    for t in oed['opt_times']:
-                        ax.axvline(t, color='r', alpha=0.6, lw=2)
-                    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-                    ax.set_xlabel('τ'); ax.set_yticks([])
-                    ax.set_title('D-optimal sampling times (red lines)\nvs heuristic stratified (gray)')
-                    for t in np.linspace(0.06, 0.94, 8):
-                        ax.axvline(t, color='gray', alpha=0.3, lw=1, ls='--')
-                    ax.grid(alpha=0.3); plt.tight_layout(); st.pyplot(fig); plt.close(fig)
-                    st.caption(f"Optimal times: {', '.join(f'{t:.3f}' for t in oed['opt_times'])}")
-                with c2:
-                    sw = pd.DataFrame(oed['sweep'])
-                    fig, ax = plt.subplots(figsize=(5, 3.5))
-                    ax.plot(sw['ratio'], sw['logdet'], 'o-', lw=2)
-                    ax.set_xlabel('ω₁/ω₀ (spin speed ratio)')
-                    ax.set_ylabel('log det(FIM)')
-                    ax.set_title('D-optimality vs spin-speed contrast')
-                    ax.grid(alpha=0.3); plt.tight_layout(); st.pyplot(fig); plt.close(fig)
-                    best_idx = sw['logdet'].idxmax()
-                    st.caption(f"Best ratio: ω₁/ω₀ = {sw.loc[best_idx,'ratio']:.2f} "
-                               f"→ log det(FIM) = {sw.loc[best_idx,'logdet']:.1f}")
-
+            st.info("Load or generate data first, then return here.")
+        else:
+            d = st.session_state.data; runs_ode = d["runs"]
+            truth_avail = bool(d.get("has_truth", False))
+            cl, cr = st.columns([1, 2])
+            with cl:
+                st.markdown("##### Initial guesses")
+                p0 = [st.number_input("Ψ₀", 0.01, 10.0, 1.2, 0.1, key="cp_psi0"),
+                      st.number_input("γ", 0.1, 8.0, 2.5, 0.1, key="cp_gam"),
+                      st.number_input("E₀", 0.01, 10.0, 3.0, 0.1, key="cp_e0"),
+                      st.number_input("δ", 0.0, 5.0, 1.0, 0.1, key="cp_del"),
+                      st.number_input("c₀", 0.3, 0.95, 0.8, 0.01, key="cp_c0")]
+                fit_btn = st.button("① Fit coupled model (exact ODE)", use_container_width=True, key="ode_fit")
+                fim_btn = st.button("② FIM & identifiability", use_container_width=True, key="ode_fim",
+                                    disabled=st.session_state.get("ode_result") is None)
+                oed_btn = st.button("④ Optimal design", use_container_width=True, key="ode_oed",
+                                    disabled=st.session_state.get("ode_result") is None)
+                gen_coup = st.button("Generate coupled data (self‑test)", use_container_width=True, key="ode_gen")
+                if gen_coup:
+                    st.session_state.data_coupled = generate_coupled_data(p0, [r["w"] for r in runs_ode], 8, 0.02)
+                    st.session_state.coupled_truth = [float(x) for x in p0]
+                    st.success("Coupled data generated (truth = sliders).")
+                selftest = st.checkbox("Self‑test (fit generated data)", key="ode_selftest",
+                                       disabled=st.session_state.get("data_coupled") is None)
+            with cr:
+                if fit_btn:
+                    runs_fit = st.session_state.data_coupled if selftest else runs_ode
+                    with st.spinner("Fitting coupled model…"):
+                        result = fit_coupled_robust(runs_fit, p0)
+                    phys = _unpack(result.x)
+                    st.session_state.update(ode_result=result, ode_phys=phys, ode_runs_fit=runs_fit)
+                result = st.session_state.get("ode_result"); phys = st.session_state.get("ode_phys")
+                if result is not None and phys is not None:
+                    st.markdown("##### ① Coupled fit")
+                    for i, c in enumerate(st.columns(5)):
+                        c.metric(["Ψ₀", "γ", "E₀", "δ", "c₀"][i], f"{phys[i]:.3f}")
+                    st.caption(f"χ²={2*result.cost:.2f} · {result.nfev} fevals")
+                    td = np.linspace(0, 1, 300)
+                    f, a = plt.subplots(1, len(runs_ode), figsize=(5*len(runs_ode), 3.2), facecolor="none")
+                    if len(runs_ode) == 1: a = [a]
+                    for i, run in enumerate(runs_ode):
+                        a[i].plot(td, solve_coupled_ode(phys, run["w"], td), color=RD, lw=2, label="fit")
+                        a[i].scatter(run["tau_s"], run["h_meas"], color=CY, s=30, zorder=5, label="data")
+                        a[i].set_xlabel("τ"); a[i].set_title(f"Run {i}"); a[i].legend(fontsize=7); ax0(a[i])
+                    st.pyplot(f)
+                if fim_btn and result is not None:
+                    with st.spinner("FIM…"): st.session_state["ode_ident"] = compute_identifiability(result)
+                ident = st.session_state.get("ode_ident")
+                if ident is not None:
+                    f, a = plt.subplots(figsize=(5, 3.2), facecolor="none")
+                    a.bar(range(len(ident["eigvals"])), ident["eigvals"], color=CY)
+                    a.set_yscale("log"); a.set_xticks(range(len(CP_NAMES))); a.set_xticklabels(CP_NAMES, fontsize=8)
+                    a.set_title(f"FIM eigenspectrum · cond={ident['cond']:.1e}"); ax0(a); st.pyplot(f)
+                    if ident["cond"] > 1e6: st.warning("⚠️ Near‑singular FIM — a direction is practically unidentifiable.")
+                if oed_btn and result is not None:
+                    with st.spinner("D‑optimal design…"):
+                        st.session_state["ode_oed"] = dict(
+                            opt=greedy_d_optimal(result.x, [r["w"] for r in runs_ode], 8, np.linspace(0.01, 0.99, 30)),
+                            sweep=spin_ratio_sweep(result.x, 8))
+                oed = st.session_state.get("ode_oed")
+                if oed is not None:
+                    f, a = plt.subplots(1, 2, figsize=(10, 3.2), facecolor="none")
+                    for t in oed["opt"]: a[0].axvline(t, color=RD, alpha=0.6, lw=2)
+                    a[0].set_xlim(0, 1); a[0].set_title("D‑optimal times"); ax0(a[0])
+                    sw = pd.DataFrame(oed["sweep"]); bi = sw["logdet"].idxmax()
+                    a[1].plot(sw["ratio"], sw["logdet"], color=AM, lw=2)
+                    a[1].set_xlabel("ω₁/ω₀"); a[1].set_title(f"best ratio {sw.loc[bi,'ratio']:.2f}"); ax0(a[1])
+                    st.pyplot(f)
