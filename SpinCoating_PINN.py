@@ -1306,35 +1306,24 @@ with tb[7]:
             gen_coup = st.button("Generate Coupled-Model Data (self-test)", use_container_width=True, key='ode_gen')
             if gen_coup:
                 w_list = [r['w'] for r in runs_ode]
-                st.session_state.data_coupled = generate_coupled_data(
-                    p0, w_list, 8, 0.02)
-                st.success("Coupled-model data generated and stored in `data_coupled`. "
-                           "Use Manual/CSV tab or swap `data` to fit against it.")
+                st.session_state.data_coupled = generate_coupled_data(p0, w_list, 8, 0.02)
+                st.session_state.coupled_truth = [float(x) for x in p0]   # ← lock in the truth
+                st.success("Truth locked at current slider values. Now set sliders to a "
+                           "DIFFERENT guess, tick Self-test, hit ①.")
+            selftest = st.checkbox("Self-test mode (fit generated coupled data)", key='ode_selftest',
+                                   disabled=st.session_state.get('data_coupled') is None)
 
         # ── Right column: results ──
         with cr:
             # ── ① Fit ──
             if fit_btn:
-                with st.spinner("Fitting coupled model via robust multi-start ODE + least-squares…"):
-                    result = fit_coupled_robust(runs_ode, p0, n_starts=8)
-                    # Unpack the log-parameter result back to physical space
-                    theta_opt = _unpack(result.x)
-                    # Attach termination message for self-consistency reporting
-                    result.message = getattr(result, 'message', '')
-                    # Create a wrapper object that looks like the old result (x, cost, fun, jac, etc.)
-                    class FitResult:
-                        def __init__(self, inner, theta_phys):
-                            self.x = np.array(theta_phys)
-                            self.cost = inner.cost
-                            self.fun = inner.fun
-                            self.jac = inner.jac
-                            self.nfev = inner.nfev
-                            self.success = inner.success
-                            self.message = inner.message
-                    st.session_state['ode_result'] = FitResult(result, theta_opt)
-                    st.session_state['ode_ident'] = None
-                    st.session_state['ode_profile'] = None
-                    st.session_state['ode_oed_result'] = None
+                runs_fit = st.session_state.data_coupled if selftest else runs_ode
+                truth = st.session_state.get('coupled_truth') if selftest else None
+                with st.spinner("Fitting coupled model (exact ODE + least-squares)…"):
+                    result = fit_coupled_robust(runs_fit, p0)
+                st.session_state.update(ode_result=result, ode_runs_fit=runs_fit,
+                                        ode_truth=truth, ode_ident=None,
+                                        ode_profile=None, ode_oed_result=None)
 
             result = st.session_state.get('ode_result')
             if result is not None:
@@ -1347,6 +1336,25 @@ with tb[7]:
                 st.caption(f"Termination: {term_msg}" if term_msg else "")
                 st.caption(f"χ² = {2*result.cost:.2f}  ·  RMSE = {np.sqrt(np.mean(result.fun**2)):.4f}  "
                            f"·  {result.nfev} function evaluations")
+
+                # Self-test recovery report
+                truth = st.session_state.get('ode_truth')
+                if truth is not None:
+                    df_rec = pd.DataFrame({
+                        'param': ['Ψ₀', 'γ', 'E₀', 'δ', 'c₀'],
+                        'true': truth,
+                        'recovered': np.round(result.x, 3),
+                        'err %': np.round(100*np.abs(np.array(result.x)-np.array(truth))/np.array(truth), 1),
+                    })
+                    st.markdown("##### Self-test recovery")
+                    st.dataframe(df_rec, use_container_width=True, hide_index=True)
+                    r0 = st.session_state['ode_runs_fit'][0]; td = r0['tau_dense']
+                    Psi_fit, E_fit = coupled_psie_from_h(result.x, solve_coupled_ode(result.x, r0['w'], td))
+                    figT, axT = plt.subplots(1, 2, figsize=(10, 3.5))
+                    axT[0].plot(td, r0['Psi_true'], 'b--', label='true Ψ'); axT[0].plot(td, Psi_fit, 'r-', label='rec Ψ')
+                    axT[1].plot(td, r0['E_true'], 'b--', label='true E');  axT[1].plot(td, E_fit, 'r-', label='rec E')
+                    for a in axT: a.legend(fontsize=8); a.grid(alpha=.3)
+                    st.pyplot(figT); plt.close(figT)
 
                 # Plot fit vs data
                 fig, axes = plt.subplots(1, len(runs_ode), figsize=(5 * len(runs_ode), 3.5),
