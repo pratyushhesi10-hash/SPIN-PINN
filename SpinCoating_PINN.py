@@ -450,14 +450,22 @@ def _sample_tau(n_meas, dense_early, early_frac, early_span, seed):
 
 @st.cache_data
 def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, noise_code, n_colloc, seed,
-                  dense_early=False, early_frac=0.5, early_span=0.2):
+                  dense_early=False, early_frac=0.5, early_span=0.2,
+                  coupled=False, c0=0.7, gamma=2.5, m_evap=1.0):
     rng = np.random.default_rng(seed); torch.manual_seed(seed)
     tau = np.linspace(0, 1, 500); w_ref = rpm_a
-    runs, K_true = [], []
+    runs, K_true, psi_runs, e_runs = [], [], [], []
+    P = dict(psi0=psi_A, gamma=gamma, e0=E_B, c0=c0, m=m_evap) if coupled else None
     for rpm in (rpm_a, rpm_b):
         w = rpm / w_ref
-        h = simulate(psi_A, psi_d, E_B, E_d, w, tau)
-        K_true.append((w**2) * psi_A*np.exp(-psi_d*tau))
+        if coupled:
+            h, c = simulate_coupled(w, P, tau)
+            K_true.append((w ** 2) * psi_of_c(c, P))
+            psi_runs.append(psi_of_c(c, P)); e_runs.append(e_of_c(c, P))
+        else:
+            h, c = simulate(psi_A, psi_d, E_B, E_d, w, tau), None
+            K_true.append((w ** 2) * psi_A * np.exp(-psi_d * tau))
+            psi_runs.append(psi_A * np.exp(-psi_d * tau)); e_runs.append(E_B * np.exp(-E_d * tau))
         tgt = _sample_tau(n_meas, dense_early, early_frac, early_span, seed)
         idx = np.sort(np.unique([np.argmin(np.abs(tau - t)) for t in tgt]))
         h_s = h[idx]
@@ -465,10 +473,12 @@ def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, noise_cod
             meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
         else:
             meas = np.clip(h_s + rng.normal(0, noise, len(idx)), 1e-4, None)
-        runs.append(dict(rpm=rpm, w=w, h=h, tau_s=tau[idx], h_meas=meas,
+        runs.append(dict(rpm=rpm, w=w, h=h, c=c, tau_s=tau[idx], h_meas=meas,
                          tau_c=np.sort(rng.uniform(0, 1, n_colloc))))
-    return dict(tau=tau, runs=runs, K_true=K_true,
-                psi=psi_A*np.exp(-psi_d*tau), e=E_B*np.exp(-E_d*tau), has_truth=True)
+    out = dict(tau=tau, runs=runs, K_true=K_true, has_truth=True, coupled=bool(coupled),
+               psi=psi_runs[0], e=e_runs[0], psi_runs=psi_runs, e_runs=e_runs)
+    if coupled: out["params_true"] = P
+    return out
 
 # ─────────────────────────── MANUAL / CSV helpers (ADDED) ───────────────────────────
 _MANUAL_EXAMPLE = ("run_id,t,h,rpm\n"
