@@ -927,6 +927,11 @@ with st.sidebar.expander("Training", expanded=True):
                             help="4 params (Ψ0, γ, E0, c0) are well-conditioned for 16 points; "
                                  "uncheck to also learn m (weaker direction).")
         m_fix = st.number_input("m (fixed)", 0.05, 4.0, float(m_evap), 0.05, disabled=not fix_m)
+        fix_gamma = st.checkbox("Fix γ (viscosity–concentration exponent)", value=False,
+                                help="Hold γ at a literature prior (≈2.5 for photoresists). "
+                                     "Removes the practically-unidentifiable Ψ₀–γ compensation "
+                                     "direction seen in the sweeps.")
+        gamma_fix = st.number_input("γ (fixed)", 0.5, 5.0, 2.5, 0.1, disabled=not fix_gamma)
         rel_weight = st.checkbox("Relative (÷h) residual weighting", value=True,
                                  help="Correct weighting for proportional noise.")
         st.caption("Bounds: Ψ₀∈[1e-3,20] · γ∈[0.1,8] · E₀∈[1e-3,20] · c₀∈[0.05,0.99]"
@@ -1041,9 +1046,11 @@ with tb[2]:
             st.stop()
         if EXACT_MODE:
             with st.spinner("Exact ODE solve (multi-start least squares)…"):
+                fixed = {}
+                if fix_m:     fixed["m"]     = float(m_fix)
+                if fix_gamma: fixed["gamma"] = float(gamma_fix)
                 xf = fit_exact(st.session_state.data, n_starts=int(n_starts),
-                               fix_m=(float(m_fix) if fix_m else None),
-                               rel_weight=rel_weight, seed=int(seed))
+                               fixed=fixed, rel_weight=rel_weight, seed=int(seed))
             st.session_state.exact_fit = xf
             st.success(f"Exact solve done · cost={xf['cost']:.3e} · {xf['nfev']} rhs solves · "
                        f"{xf['sec']:.1f}s — see Results.")
