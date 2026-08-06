@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.integrate import solve_ivp
+from scipy.optimize import least_squares
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -304,6 +305,72 @@ def simulate_coupled(w, P, tau):
     sol = solve_ivp(rhs, (0, 1), [1.0, P["c0"]], t_eval=tau,
                     method="RK45", rtol=1e-8, atol=1e-10)
     return sol.y[0], sol.y[1]
+
+
+# ═══════════════ FIX 2 / PHASE 2: EXACT ODE SOLVE ═══════════════
+# Classical parameter estimation for the coupled c(τ) model (Fix 1):
+#   forward: integrate dh/dτ = -w²Ψ(c)h³ - E(c),  dc/dτ = -E(c)(1-c)/h
+#   fit:     least_squares on h(τ_meas; θ, w_run) - h_meas
+# The ODE holds exactly (no soft loss); all information comes from data misfit.
+
+def _exact_fun_unpack(data, fix_m, rel_weight):
+    runs = data["runs"]
+    t_obs = [np.asarray(r["tau_s"], float) for r in runs]
+    h_obs = [np.asarray(r["h_meas"], float) for r in runs]
+    w_obs = [float(r["w"]) for r in runs]
+    # rel weighting = correct weighting for proportional noise (floor avoids
+    # amplifying the clipped, near-zero tail where data carry no information)
+    wts = [1.0 / np.maximum(h, 1e-3) for h in h_obs] if rel_weight \
+            else [np.ones_like(h) for h in h_obs]
+    n_tot = sum(h.size for h in h_obs)
+
+    def unpack(x):
+        P = dict(psi0=float(x[0]), gamma=float(x[1]), e0=float(x[2]), c0=float(x[3]))
+        P["m"] = float(fix_m) if fix_m is not None else float(x[4])
+        return P
+
+    def fun(x):
+        P = unpack(x)
+        out = []
+        for t, h, w, wt in zip(t_obs, h_obs, w_obs, wts):
+            try:
+                hm, _ = simulate_coupled(w, P, t)      # Phase-1 forward model
+            except Exception:
+                return np.full(n_tot, 1e3)             # integration failure -> huge cost
+            if hm.shape != h.shape or not np.all(np.isfinite(hm)):
+                return np.full(n_tot, 1e3)
+            out.append((hm - h) * wt)
+        return np.concatenate(out)
+
+    return fun, unpack
+
+
+def fit_exact(data, n_starts=6, fix_m=1.0, rel_weight=True, seed=42):
+    """Multi-start bounded least-squares fit of the coupled model.
+    fix_m: float -> m fixed (4-param fit); None -> m learned (5-param)."""
+    t0 = time.time()
+    fun, unpack = _exact_fun_unpack(data, fix_m, rel_weight)
+    lo = [1e-3, 0.1, 1e-3, 0.05]; hi = [20.0, 8.0, 20.0, 0.99]
+    if fix_m is None:
+        lo += [0.05]; hi += [4.0]
+    rng = np.random.default_rng(seed)
+    e_init = estimate_E_late_sweep(data) or (3.0, 3.5)   # smart start for E0
+    starts = [np.array([1.0, 2.5, e_init[0], 0.7] + ([] if fix_m is not None else [1.0]))]
+    for _ in range(int(n_starts) - 1):
+        starts.append(np.array(
+            [10 ** rng.uniform(np.log10(0.3), np.log10(4.0)),
+             rng.uniform(1.0, 4.0),
+             10 ** rng.uniform(np.log10(0.5), np.log10(6.0)),
+             rng.uniform(0.4, 0.9)]
+            + ([] if fix_m is not None else [rng.uniform(0.5, 2.0)])))
+    best = None
+    for x0 in starts:
+        r = least_squares(fun, x0, bounds=(lo, hi), method="trf",
+                          ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=400)
+        if best is None or r.cost < best.cost:
+            best = r
+    return dict(theta=unpack(best.x), cost=float(best.cost), jac=best.jac,
+                nfev=int(best.nfev), sec=time.time() - t0, fix_m=fix_m)
 
 class ConstitutiveParams(nn.Module):
     """Learnable shared scalars θ=(Ψ0,γ,E0,c0[,m]); positivity built in; m frozen by default."""
