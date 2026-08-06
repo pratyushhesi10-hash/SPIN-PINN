@@ -925,11 +925,8 @@ with tb[3]:
     st.markdown("#### Inverse recovery")
     if st.session_state.nets and st.session_state.data:
         d = st.session_state.data
-        if coupled:
-            r = evaluate_coupled(st.session_state.nets, st.session_state.data)
-            fit_params, param_errs = param_errors(st.session_state.nets, st.session_state.data)
-        else:
-            r = evaluate(st.session_state.nets, st.session_state.data)
+        coupled_mode = bool(d.get("coupled")) and bool(st.session_state.nets.get("coupled"))
+        r = evaluate_coupled(st.session_state.nets, d) if coupled_mode else evaluate(st.session_state.nets, d)
         rel = lambda p, t: float(np.mean(np.abs(p - t) / (np.abs(t) + 1e-8)) * 100)
         comb = lambda K, h, e: K*h**3 + e
         truth = bool(d.get("has_truth", False)) and d.get("psi") is not None
@@ -947,11 +944,9 @@ with tb[3]:
             return rel(hd, run["h_meas"]), "fit"
 
         m1, m2, m3, m4 = st.columns(4)
-        if coupled:
-            m1.metric("Ψ₀ error", f"{param_errs['psi0']:.1f}%")
-            m2.metric("γ error", f"{param_errs['gamma']:.1f}%")
-            m3.metric("E₀ error", f"{param_errs['e0']:.1f}%")
-            m4.metric("c₀ error", f"{param_errs['c0']:.1f}%")
+        if coupled_mode:
+            m1.metric("Ψ run A err", f"{rel(r['psis'][0], d['psi_runs'][0]):.1f}%")
+            m2.metric("E run A err", f"{rel(r['es'][0], d['e_runs'][0]):.1f}%")
         else:
             m1.metric("Ψ(τ) error", f"{rel(r['psi'], d['psi']):.1f}%" if truth else "—")
             m2.metric("E(τ) error", f"{rel(r['e'], d['e']):.1f}%" if truth else "—")
@@ -962,23 +957,24 @@ with tb[3]:
             else:
                 m4.metric("h run B", "—")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-            if truth:
-                a.plot(d["tau"], d["psi"], color=CY, lw=2.4, label="true Ψ")
-                a.plot(d["tau"], d["e"], color=AM, lw=2.4, label="true E")
-            a.plot(d["tau"], r["psi"], color=CY, lw=2, ls="--", label="pred Ψ")
-            a.plot(d["tau"], r["e"], color=AM, lw=2, ls="--", label="pred E")
-            a.set_xlabel("τ"); a.legend(frameon=False, fontsize=8); ax0(a)
-            a.set_title("Shared Ψ & E " + ("recovery" if truth else "(no ground truth)")); st.pyplot(f)
-        with c2:
-            f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
-            for i in range(n):
-                cp = comb(r["Ks"][i], r["hs"][i], r["e"])
-                if truth and d.get("K_true") is not None:
-                    ct = comb(d["K_true"][i], d["runs"][i]["h"], d["e"])
-                    a.plot(d["tau"], ct, color=[CY, AM][i % 2], lw=2.4, label=f"true run{i}")
+        if not coupled_mode:
+            c1, c2 = st.columns(2)
+            with c1:
+                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+                if truth:
+                    a.plot(d["tau"], d["psi"], color=CY, lw=2.4, label="true Ψ")
+                    a.plot(d["tau"], d["e"], color=AM, lw=2.4, label="true E")
+                a.plot(d["tau"], r["psi"], color=CY, lw=2, ls="--", label="pred Ψ")
+                a.plot(d["tau"], r["e"], color=AM, lw=2, ls="--", label="pred E")
+                a.set_xlabel("τ"); a.legend(frameon=False, fontsize=8); ax0(a)
+                a.set_title("Shared Ψ & E " + ("recovery" if truth else "(no ground truth)")); st.pyplot(f)
+            with c2:
+                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+                for i in range(n):
+                    cp = comb(r["Ks"][i], r["hs"][i], r["e"])
+                    if truth and d.get("K_true") is not None:
+                        ct = comb(d["K_true"][i], d["runs"][i]["h"], d["e"])
+                        a.plot(d["tau"], ct, color=[CY, AM][i % 2], lw=2.4, label=f"true run{i}")
                 a.plot(d["tau"], cp, color=[CY, AM][i % 2], lw=2, ls="--", label=f"pred run{i}")
             a.set_xlabel("τ"); a.set_ylabel("Kh³+E"); a.legend(frameon=False, fontsize=8); ax0(a)
             a.set_title("Combined ODE term (the identifiable part)"); st.pyplot(f)
@@ -995,7 +991,7 @@ with tb[3]:
                 alg = algebraic_split(st.session_state.nets["hn"], w0, w1, tau_d)
             except Exception as ex:
                 st.warning("algebraic split failed: %r" % ex)
-        if alg is not None:
+        if alg is not None and not coupled_mode:
             ca1, ca2 = st.columns(2)
             with ca1:
                 f, a = plt.subplots(figsize=(6, 3.4), facecolor="none")
@@ -1045,6 +1041,41 @@ with tb[3]:
                        "the region that carries almost all the viscosity information. Sampling densely "
                        "left of that line — not evenly across [0,1] — is the only thing that can pull "
                        "the decay rate back into reach.")
+
+        if coupled_mode:
+            fit, perr = param_errors(st.session_state.nets, d)
+            P = d["params_true"]
+            st.markdown("**Constitutive parameter recovery (fitted vs truth)**")
+            st.dataframe(pd.DataFrame([
+                {"param": k, "true": round(P[k], 3), "fitted": round(fit[k], 3), "rel err %": round(perr[k], 1)}
+                for k in ("psi0", "gamma", "e0", "c0")]), use_container_width=True)
+            worst = max(perr[k] for k in ("psi0", "gamma", "e0", "c0"))
+            status_card('ok' if worst < 25 else ('warn' if worst < 60 else 'bad'),
+                        "Coupled parameter recovery",
+                        [f"{k}: {perr[k]:.1f}%" for k in ("psi0", "gamma", "e0", "c0")] + [f"worst: {worst:.1f}%"])
+            c1, c2 = st.columns(2)
+            with c1:
+                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+                for i in range(n):
+                    a.plot(d["tau"], d["psi_runs"][i], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label=f"true Ψ run{i}")
+                    a.plot(d["tau"], r["psis"][i], color=[CY, AM][i % 2], lw=2, ls="--", label=f"pred Ψ run{i}")
+                a.set_xlabel("τ"); a.legend(frameon=False, fontsize=7); ax0(a)
+                a.set_title("Ψ(τ)=Ψ₀(c/c₀)^γ per run"); st.pyplot(f)
+            with c2:
+                f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+                for i in range(n):
+                    a.plot(d["tau"], d["runs"][i]["c"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label=f"true c run{i}")
+                    a.plot(d["tau"], r["cs"][i], color=[CY, AM][i % 2], lw=2, ls="--", label=f"pred c run{i}")
+                a.set_xlabel("τ"); a.legend(frameon=False, fontsize=7); ax0(a)
+                a.set_title("solvent fraction c(τ)"); st.pyplot(f)
+            f, a = plt.subplots(figsize=(7, 3.2), facecolor="none")
+            for i in range(n):
+                ct = comb(d["K_true"][i], d["runs"][i]["h"], d["e_runs"][i])
+                cpred = comb(r["Ks"][i], r["hs"][i], r["es"][i])
+                a.plot(d["tau"], ct, color=[CY, AM][i % 2], lw=2.2, alpha=.6, label=f"true run{i}")
+                a.plot(d["tau"], cpred, color=[CY, AM][i % 2], lw=2, ls="--", label=f"pred run{i}")
+            a.set_xlabel("τ"); a.set_ylabel("Kh³+E"); a.legend(frameon=False, fontsize=7); ax0(a)
+            a.set_title("Combined ODE term (coupled)"); st.pyplot(f)
 
         if not truth:
             # real per-run h-fit errors (what the verdict should read, not "by construction")
