@@ -1194,11 +1194,8 @@ with tb[5]:
 def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, ph=None, tag=""):
     torch.manual_seed(seed); rng = np.random.default_rng(seed)
     runs = data["runs"]; h_nets = [ThicknessNet(hid, lay) for _ in runs]
-    e_init = estimate_E_late_sweep(data) if cfg.get("autofill") else None
-    if e_init is None: e_init = (1.0, 1.0)
-    psi = PsiParNet() if cfg.get("psipar") else PsiNet(hid, lay)
-    em = cfg.get("emode", "free")
-    e_net = EConstNet(e_init[0]) if em=="const" else (EExpNet(*e_init) if em=="exp" else ETildeNet(hid, lay))
+    
+    # Build TD, HD, TC (needed for both coupled and uncoupled branches)
     TD, HD, TC = [], [], []
     for r in runs:
         ts, hs = r["tau_s"], r["h_meas"]
@@ -1212,6 +1209,31 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
         tc = (np.sort(np.concatenate([rng.uniform(0,1,n//2), rng.beta(2,5,n-n//2)]))
               if cfg.get("early") else np.sort(rng.uniform(0,1,n)))
         TC.append(torch.tensor(tc, dtype=torch.float32).reshape(-1,1).requires_grad_(True))
+    
+    # === COUPLED MODE BRANCH ===
+    if cfg.get("coupled"):
+        c_nets = [ConcentrationNet(hid, lay) for _ in runs]
+        cp = ConstitutiveParams(psi0=psi_A, gamma=gamma, e0=E_B, c0=c0, m=m_evap, learn_m=False)
+        params = ([p for n in h_nets for p in n.parameters()] +
+                  [p for n in c_nets for p in n.parameters()] + list(cp.parameters()))
+        opt = optim.Adam(params, lr=lr); t0 = time.time()
+        for ep in range(epochs):
+            opt.zero_grad(); Ld = Lp = 0.0
+            for i, r in enumerate(runs):
+                Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i]) ** 2)
+                R1, R2, *_ = residual_coupled(h_nets[i], c_nets[i], cp, TC[i], r["w"])
+                Lp = Lp + torch.mean(R1 ** 2) + lam_c * torch.mean(R2 ** 2)
+            loss = w_d * Ld + w_p * Lp; loss.backward(); opt.step()
+            if prog is not None and ep % 50 == 0: prog.progress((ep + 1) / epochs)
+            if ph is not None and ep % 50 == 0:
+                ph.caption(f"{tag} · epoch {ep+1}/{epochs} · Ld {Ld.item():.4f} · Lp {Lp.item():.4f}")
+        return dict(hn=h_nets, cn=c_nets, cp=cp, coupled=True), time.time() - t0
+    
+    e_init = estimate_E_late_sweep(data) if cfg.get("autofill") else None
+    if e_init is None: e_init = (1.0, 1.0)
+    psi = PsiParNet() if cfg.get("psipar") else PsiNet(hid, lay)
+    em = cfg.get("emode", "free")
+    e_net = EConstNet(e_init[0]) if em=="const" else (EExpNet(*e_init) if em=="exp" else ETildeNet(hid, lay))
     params = [p for net in h_nets for p in net.parameters()] + list(psi.parameters()) + list(e_net.parameters())
     opt = optim.Adam(params, lr=lr); t0 = time.time()
     for ep in range(epochs):
@@ -1245,8 +1267,20 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
     return dict(hn=h_nets, psi=psi, en=e_net), time.time()-t0
 
 def sweep_metrics(nets, data):
-    r = evaluate(nets, data); m = {}
     rel = lambda p, t: float(np.mean(np.abs(p-t)/(np.abs(t)+1e-8))*100)
+    m = {}
+    
+    # === COUPLED MODE BRANCH ===
+    if data.get("coupled") and nets.get("coupled"):
+        r = evaluate_coupled(nets, data)
+        m["psi"] = rel(r["psis"][0], data["psi_runs"][0]); m["E"] = rel(r["es"][0], data["e_runs"][0])
+        m["h"] = float(np.mean([rel(r["hs"][i], data["runs"][i]["h"]) for i in range(len(data["runs"]))]))
+        m["comb"] = float(np.mean([rel(r["Ks"][i] * r["hs"][i] ** 3 + r["es"][i],
+                                     data["K_true"][i] * data["runs"][i]["h"] ** 3 + data["e_runs"][i])
+                                   for i in range(len(data["runs"]))]))
+        return m
+    
+    r = evaluate(nets, data)
     if data.get("psi") is not None:
         m["psi"] = rel(r["psi"], data["psi"]); m["E"] = rel(r["e"], data["e"])
         m["h"] = float(np.mean([rel(r["hs"][i], data["runs"][i]["h"]) for i in range(len(data["runs"]))]))
@@ -1265,6 +1299,7 @@ def individual_configs():
     yield ("E=const",             dict(emode="const"))
     yield ("E=exp",               dict(emode="exp"))
     yield ("E=exp+autofill",      dict(emode="exp", autofill=True))
+    yield ("coupled",             dict(coupled=True))              # COUPLED MODE
 
 
 def exhaustive_configs():   # 60 pruned combos
@@ -1288,10 +1323,11 @@ def curated_configs():      # sensible stacks, incl. two "full" stacks
     yield ("full(mono)",              dict(early=True, mono=True, rw=True, emode="exp", autofill=True))
     yield ("full(psipar)",            dict(early=True, psipar=True, rw=True, emode="exp", autofill=True))
     yield ("full(causal)",            dict(early=True, causal=True, rw=True, emode="exp", autofill=True))  # NEW
+    yield ("coupled+early",           dict(coupled=True, early=True))      # COUPLED + EARLY
 
 
 def cfg_name(cfg):
-    p = [k for k in ("early","psipar","mono","rw","causal","autofill") if cfg.get(k)]
+    p = [k for k in ("early","psipar","mono","rw","causal","autofill","coupled") if cfg.get(k)]
     if cfg.get("emode","free") != "free": p.append("E="+cfg["emode"])
     return "+".join(p) if p else "baseline"
 
