@@ -870,25 +870,41 @@ with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
     early_span = st.slider("…early window span (τ)", 0.1, 0.4, 0.2, 0.05,
                            disabled=not dense_early)
 with st.sidebar.expander("Training", expanded=True):
-    epochs = st.slider("Epochs", 200, 30000, 1500, 100)
-    lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3)
-    hid = st.slider("Hidden width", 16, 64, 32, 8)
-    lay = st.slider("Hidden layers", 2, 5, 3)
-    w_d = st.slider("W_data", 0.1, 5.0, 1.0, 0.1)
-    w_p = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1)
-    param_psi = st.checkbox("Use parameterized Ψ (PsiPar)", value=False)
-    mono_w = st.slider("Ψ monotonicity weight (enforce decay)", 0.0, 1.0, 0.0, 0.05)
-    reweight_h3 = st.checkbox("Re-weight physics loss by 1/h³", value=False)
-    causal_rw = st.checkbox(
-        "Causality-respecting physics weighting",
-        value=False,
-        help="Progressively unlocks later time points in the physics loss. "
-             "Early training focuses on τ<0.2 (the information horizon), "
-             "then gradually allows the full domain. Prevents the optimizer "
-             "from fitting late-time evaporation before learning early-time "
-             "convective thinning. Stabilizer only — does not create new "
-             "information."
-    )
+    estimator = st.radio("Estimator", ["PINN (soft loss)", "Exact ODE solve"], index=0,
+                         help="Exact ODE solve = coupled c(τ) model (Fix 1) fit by bounded "
+                              "least-squares (Fix 2): no loss weights, no epochs, ODE exact.")
+    EXACT = (estimator == "Exact ODE solve")
+    epochs = st.slider("Epochs", 200, 30000, 1500, 100, disabled=EXACT)
+    lr = st.select_slider("Learning rate", [5e-4, 1e-3, 2e-3, 5e-3], value=1e-3, disabled=EXACT)
+    hid = st.slider("Hidden width", 16, 64, 32, 8, disabled=EXACT)
+    lay = st.slider("Hidden layers", 2, 5, 3, disabled=EXACT)
+    w_d = st.slider("W_data", 0.1, 5.0, 1.0, 0.1, disabled=EXACT)
+    w_p = st.slider("W_physics", 0.1, 5.0, 1.0, 0.1, disabled=EXACT)
+    param_psi = st.checkbox("Use parameterized Ψ (PsiPar)", value=False, disabled=EXACT)
+    mono_w = st.slider("Ψ monotonicity weight (enforce decay)", 0.0, 1.0, 0.0, 0.05, disabled=EXACT)
+    reweight_h3 = st.checkbox("Re-weight physics loss by 1/h³", value=False, disabled=EXACT)
+    if EXACT:
+        n_starts = st.slider("Multi-starts", 1, 16, 6, 1)
+        fix_m = st.checkbox("Fix m (4-param fit)", value=True,
+                            help="4 params (Ψ0, γ, E0, c0) are well-conditioned for 16 points; "
+                                 "uncheck to also learn m (weaker direction).")
+        m_fix = st.number_input("m (fixed)", 0.05, 4.0, float(m_evap), 0.05, disabled=not fix_m)
+        rel_weight = st.checkbox("Relative (÷h) residual weighting", value=True,
+                                 help="Correct weighting for proportional noise.")
+        st.caption("Bounds: Ψ₀∈[1e-3,20] · γ∈[0.1,8] · E₀∈[1e-3,20] · c₀∈[0.05,0.99]"
+                   + ("" if fix_m else " · m∈[0.05,4]"))
+    else:
+        causal_rw = st.checkbox(
+            "Causality-respecting physics weighting",
+            value=False,
+            help="Progressively unlocks later time points in the physics loss. "
+                 "Early training focuses on τ<0.2 (the information horizon), "
+                 "then gradually allows the full domain. Prevents the optimizer "
+                 "from fitting late-time evaporation before learning early-time "
+                 "convective thinning. Stabilizer only — does not create new "
+                 "information."
+        )
+    st.session_state["EXACT"] = EXACT
 
 with st.sidebar.expander("Ẽ fixing (E correction)"):
     e_mode = st.radio("Ẽ mode", ["Free (learned)", "Fixed: constant", "Fixed: exponential"], index=0)
@@ -910,7 +926,7 @@ if SRC_SYN:
 else:
     st.sidebar.caption("Load your thickness data in the **Manual / CSV** tab, then Train.")
     gen_btn = False
-train_btn = st.sidebar.button("Train PINN", use_container_width=True, key="train_btn")
+train_btn = st.sidebar.button("Train PINN" if not ("EXACT" in globals() and EXACT) else "Fit Exact ODE", use_container_width=True, key="train_btn")
 
 for k in ("data", "nets", "hist"):
     st.session_state.setdefault(k, None)
@@ -979,27 +995,37 @@ with tb[1]:
 # ---------- 2 · TRAIN (base; safe guard instead of silent synthetic) ----------
 with tb[2]:
     st.markdown("#### Training")
+    EXACT_MODE = st.session_state.get("EXACT", False)
     if train_btn:
         if st.session_state.data is None:
             st.warning("No data loaded yet. Use **Generate data** (synthetic) or load CSV / manual "
                        "data in the **Manual / CSV** tab first.")
             st.stop()
         prog = st.progress(0); ph = st.empty()
-        if coupled:
+        if EXACT_MODE:
+            # Exact ODE solve via least_squares (Fix 2)
+            fix_m_val = float(m_fix) if fix_m else None
+            res = fit_exact(st.session_state.data, n_starts=n_starts, fix_m=fix_m_val, rel_weight=rel_weight, seed=seed)
+            st.session_state["exact_result"] = res
+            st.success(f"Exact ODE fit complete in {res['sec']:.2f}s (cost={res['cost']:.4g}, nfev={res['nfev']}) — check **Results**.")
+        elif coupled:
             st.session_state.nets, st.session_state.hist = train_coupled(
                 st.session_state.data, hid, lay, epochs, lr, w_d, w_p, lam_c, seed, prog, ph)
         else:
             st.session_state.nets, st.session_state.hist = train(
                 st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3, causal_rw=causal_rw, fix_E=fix_E)
-        st.success("Training complete — check the **Results** tab.")
+        if not EXACT_MODE:
+            st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
         f, a = plt.subplots(figsize=(8, 3.6), facecolor="none")
         a.plot(h["d"], color=CY, lw=2, label="L_data"); a.plot(h["p"], color=AM, lw=2, label="L_physics")
         a.set_yscale("log"); a.set_xlabel("epoch"); a.set_ylabel("loss (log)")
         a.legend(frameon=False); ax0(a); st.pyplot(f)
-    elif not train_btn:
+    elif not train_btn and not EXACT_MODE:
         st.info("Hit **Train PINN** in the sidebar.")
+    elif not train_btn and EXACT_MODE:
+        st.info("Hit **Fit Exact ODE** in the sidebar.")
 
 # ---------- 3 · RESULTS (base; truth-guarded, variable run count) ----------
 with tb[3]:
