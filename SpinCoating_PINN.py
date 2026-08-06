@@ -1216,6 +1216,68 @@ with tb[3]:
     else:
         st.info("Generate or load data, then train.")
 
+    # ---- Exact ODE solve results (Fix 2) ----
+    xf = st.session_state.get("exact_fit")
+    if xf is not None and st.session_state.data is not None:
+        d2 = st.session_state.data
+        truth2 = bool(d2.get("has_truth", False))
+        ctruth = truth2 and bool(d2.get("coupled", False)) and d2.get("params_true") is not None
+        n2 = len(d2["runs"])
+        rel2 = lambda p, t: float(np.mean(np.abs(p - t) / (np.abs(t) + 1e-8)) * 100)
+        st.markdown("#### Exact ODE solve — coupled c(τ) model (Fix 1 + Fix 2)")
+        st.caption(f"scipy least-squares · cost={xf['cost']:.3e} · {xf['nfev']} rhs solves · {xf['sec']:.1f}s · "
+                   + (f"m fixed at {xf['fix_m']}" if xf["fix_m"] is not None else "m learned"))
+        P = xf["theta"]
+        pred_h, pred_c = [], []
+        for r in d2["runs"]:
+            hh, cc = simulate_coupled(float(r["w"]), P, d2["tau"])
+            pred_h.append(hh); pred_c.append(cc)
+        order = ["psi0", "gamma", "e0", "c0"] + (["m"] if xf["fix_m"] is None else [])
+        rows = []
+        for k in order:
+            row = {"param": k, "fitted": round(float(P[k]), 4)}
+            if ctruth:
+                tv = float(d2["params_true"][k])
+                row["true"] = round(tv, 4)
+                row["rel err %"] = round(abs(P[k] - tv) / max(abs(tv), 1e-8) * 100, 1)
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        pp, pe = psi_of_c(pred_c[0], P), e_of_c(pred_c[0], P)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Ψ(τ) err", f"{rel2(pp, d2['psi_runs'][0]):.1f}%" if ctruth else "—")
+        m2.metric("E(τ) err", f"{rel2(pe, d2['e_runs'][0]):.1f}%" if ctruth else "—")
+        he = [rel2(pred_h[i], d2["runs"][i]["h"]) if (truth2 and d2["runs"][i].get("h") is not None
+              and len(d2["runs"][i]["h"]) == len(pred_h[i])) else rel2(pred_h[i], d2["runs"][i]["h_meas"])
+              for i in range(n2)]
+        m3.metric("h run A", f"{he[0]:.2f}%")
+        m4.metric("h run B", f"{he[1]:.2f}%" if n2 >= 2 else "—")
+        c1, c2 = st.columns(2)
+        with c1:
+            f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+            for i in range(min(n2, 2)):
+                if truth2 and d2["runs"][i].get("h") is not None:
+                    a.plot(d2["tau"], d2["runs"][i]["h"], color=[CY, AM][i % 2], lw=2.2, alpha=.5, label=f"true run{i}")
+                a.scatter(d2["runs"][i]["tau_s"], d2["runs"][i]["h_meas"], color=[CY, AM][i % 2], s=30, zorder=5)
+                a.plot(d2["tau"], pred_h[i], "--", color=[CY, AM][i % 2], lw=2, label=f"exact run{i}")
+            a.set_xlabel("τ"); a.set_ylabel("h"); a.legend(frameon=False, fontsize=8); ax0(a)
+            a.set_title("h(τ): exact solve vs data"); st.pyplot(f)
+        with c2:
+            f, a = plt.subplots(figsize=(6, 3.6), facecolor="none")
+            a.plot(d2["tau"], pp, color=CY, lw=2, ls="--", label="exact Ψ")
+            a.plot(d2["tau"], pe, color=AM, lw=2, ls="--", label="exact E")
+            if ctruth:
+                a.plot(d2["tau"], d2["psi_runs"][0], color=CY, lw=2.2, alpha=.5, label="true Ψ")
+                a.plot(d2["tau"], d2["e_runs"][0], color=AM, lw=2.2, alpha=.5, label="true E")
+            a.set_xlabel("τ"); a.legend(frameon=False, fontsize=8); ax0(a)
+            a.set_title("Ψ, E from exact solve" + ("" if ctruth else " (no coupled truth)")); st.pyplot(f)
+        if truth2 and not ctruth:
+            st.caption("Data came from the UNCOUPLED model, so this is an effective-model fit — "
+                       "Ψ/E are not expected to match the exponential truth. Switch Physics → "
+                       "Coupled to test exact recovery.")
+        if st.session_state.get("nets") is not None:
+            st.caption("Three estimators now coexist on the same data: PINN (soft loss) above, "
+                       "algebraic hybrid, and this exact solve — compare Ψ/E columns directly.")
+
 # ---------- 4 · MANUAL / CSV (ADDED TAB) ----------
 with tb[4]:
     st.markdown("#### Manual / CSV input")
