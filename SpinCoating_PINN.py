@@ -1467,10 +1467,13 @@ with tb[7]:
                 runs_fit = st.session_state.data_coupled if selftest else runs_ode
                 with st.spinner("fitting (exact ODE, bounded params)..."):
                     res=fit_coupled(runs_fit,p0)
-                st.session_state.update(ode_res=res, ode_phys=_unpack(res.x),
-                    ode_runs=runs_fit,
-                    ode_truth=st.session_state.get("coupled_truth") if selftest else None,
-                    ode_ident=None, ode_prof=None, ode_oed=None)
+                st.session_state.ode_res=res
+                st.session_state.ode_phys=_unpack(res.x)
+                st.session_state.ode_runs=runs_fit
+                st.session_state.ode_truth=(st.session_state.get("coupled_truth") if selftest else None)
+                st.session_state.ode_ident=None
+                st.session_state.ode_prof=None
+                st.session_state.ode_oed=None
             res=st.session_state.get("ode_res"); phys=st.session_state.get("ode_phys")
             if res is not None and phys is not None:
                 st.markdown("##### Fit (Fix 1+2)")
