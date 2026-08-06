@@ -17,8 +17,6 @@ __pycache__/
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # Dependencies
 .venv/
