@@ -281,6 +281,62 @@ def estimate_E_late(runs, k=4):
     slope, intercept = np.polyfit(np.concatenate(ts), np.concatenate(ys), 1)
     return float(np.exp(intercept)), float(-slope)
 
+# ============================================================
+# FIX 5: CAUSALITY-RESPECTING REWEIGHTING
+# Progressively unlocks later time points only after earlier
+# ones are sufficiently weighted, preventing the optimizer from
+# "jumping ahead" to fit late-time evaporation-dominated dynamics
+# before properly learning early-time convective thinning.
+# Reference: Krishnapriyan et al. (2021) "Characterizing possible
+# failure modes in physics-informed neural networks"
+# ============================================================
+
+def causal_weights(tau, epoch, total_epochs, tau_start=0.2, temperature=0.08):
+    """
+    Compute smooth causal weights for collocation points.
+
+    The causal frontier starts at tau_start (the information horizon
+    boundary) and advances linearly to 1.0 over training. Points before
+    the frontier get full weight; points after get smoothly decaying weight.
+
+    Parameters
+    ----------
+    tau : torch.Tensor, shape (N, 1)
+        Collocation point times in [0, 1].
+    epoch : int
+        Current training epoch (0-indexed).
+    total_epochs : int
+        Total number of training epochs.
+    tau_start : float
+        Initial causal frontier. Set to 0.2 based on the finding that
+        94% of the two-run leverage resides in tau < 0.2.
+    temperature : float
+        Controls sharpness of the causal gate. Larger = smoother transition.
+        0.08 gives a gentle ramp over ~0.16 in tau, avoiding sharp
+        discontinuities that could destabilize gradients.
+
+    Returns
+    -------
+    torch.Tensor, shape (N, 1)
+        Per-point weights, mean-normalized to ~1 so the global loss
+        magnitude is preserved (prevents implicit lr rescaling).
+    """
+    # Linear schedule: frontier goes from tau_start -> 1.0 over training
+    progress = float(epoch) / max(float(total_epochs) - 1.0, 1.0)
+    tau_frontier = tau_start + (1.0 - tau_start) * progress
+
+    # Smooth sigmoid gate: w ≈ 1 for tau << frontier, w → 0 for tau >> frontier
+    # Detach: weights are NOT learnable parameters
+    with torch.no_grad():
+        weights = torch.sigmoid((tau_frontier - tau) / temperature)
+        # Mean-normalize: keeps total loss magnitude stable across epochs,
+        # preventing the causal schedule from implicitly changing the
+        # effective learning rate
+        weights = weights / (weights.mean() + 1e-8)
+
+    return weights
+
+
 def residual(h_net, psi_net, e_net, tau, w_norm):
     h = h_net(tau, h0=1.0)
     dh = torch.autograd.grad(h, tau, torch.ones_like(h), create_graph=True, retain_graph=True)[0]
@@ -394,7 +450,15 @@ def _build_manual(rows, h_wet, t_ref, default_rpm):
                 manual_meta=dict(h_wet=float(h_wet), t_ref=float(t_ref), rpm_ref=rpm_ref))
 
 # ─────────────────────────── Training / eval (base; .index -> enumerate) ───────────────────────────
-def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mono_w=0.0, reweight_h3=False, fix_E=None):
+def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mono_w=0.0, reweight_h3=False, causal_rw=False, fix_E=None):
+    """
+    Two-phase PINN training.
+    
+    New parameter:
+        causal_rw : bool
+            If True, applies causality-respecting weights to the physics
+            residual, progressively unlocking later time points.
+    """
     torch.manual_seed(seed)
     h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
     psi = PsiPar() if param_psi else PsiNet(h, L)
@@ -423,20 +487,34 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
     oC = optim.Adam(pC, lr=lr)
     hist = dict(d=[], p=[], t=[])
     Ld_C = 0.0
+    n_phase_c = epochs - epochs // 2  # number of epochs in phase C
     for ep in range(epochs // 2, epochs):
         oC.zero_grad(); Ld = Lp = Lmono = 0.0
+        # Local epoch within Phase C (0-indexed), used for causal schedule
+        ep_local = ep - epochs // 2
         for i, r in enumerate(data["runs"]):
             td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
             hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
             Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd) ** 2)
             tc = torch.tensor(r["tau_c"], dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
             res, hh, _ = residual(h_nets[i], psi, e, tc, r["w"])
+            
+            # --- Physics loss with optional causal + 1/h³ reweighting ---
+            res_sq = res ** 2
+            
+            if causal_rw:
+                # Causality-respecting weights: progressive time unlocking
+                w_causal = causal_weights(tc.detach(), ep_local, n_phase_c)
+                res_sq = res_sq * w_causal
+            
             if reweight_h3:
-                wgt = 1.0 / (hh.detach() ** 3 + 1e-3)
+                # Existing 1/h³ reweight (capped), applied multiplicatively
+                wgt = torch.clamp(1.0 / (hh.detach() ** 3 + 1e-4), max=100.0)
                 wgt = wgt / wgt.mean()
-                Lp = Lp + torch.mean((wgt * res) ** 2)
-            else:
-                Lp = Lp + torch.mean(res ** 2)
+                res_sq = res_sq * wgt
+            
+            Lp = Lp + torch.mean(res_sq)
+            
             if mono_w > 0.0:
                 pt = psi(tc); dpt = torch.autograd.grad(pt.sum(), tc, create_graph=True, retain_graph=True)[0]
                 Lmono = Lmono + torch.mean(torch.relu(dpt)) ** 2
@@ -448,7 +526,7 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
         hist["d"].append(Ld.item()); hist["p"].append(Lp.item()); hist["t"].append(loss.item())
         Ld_C = float(Ld.item())
         if ep % 20 == 0 or ep == epochs - 1:
-            prog.progress(0.5 + (ep - epochs // 2 + 1) / (epochs - epochs // 2) * 0.5)
+            prog.progress(0.5 + (ep - epochs // 2 + 1) / n_phase_c * 0.5)
             ph.caption(f"Phase C epoch {ep+1}/{epochs} · L_data {Ld_C:.5f} · L_phys {Lp.item():.5f}")
 
     return dict(hn=h_nets, psi=psi, en=e, Ld_A=Ld_A, Ld_C=Ld_C), hist
@@ -545,6 +623,16 @@ with st.sidebar.expander("Training", expanded=True):
     param_psi = st.checkbox("Use parameterized Ψ (PsiPar)", value=False)
     mono_w = st.slider("Ψ monotonicity weight (enforce decay)", 0.0, 1.0, 0.0, 0.05)
     reweight_h3 = st.checkbox("Re-weight physics loss by 1/h³", value=False)
+    causal_rw = st.checkbox(
+        "Causality-respecting physics weighting",
+        value=False,
+        help="Progressively unlocks later time points in the physics loss. "
+             "Early training focuses on τ<0.2 (the information horizon), "
+             "then gradually allows the full domain. Prevents the optimizer "
+             "from fitting late-time evaporation before learning early-time "
+             "convective thinning. Stabilizer only — does not create new "
+             "information."
+    )
 
 with st.sidebar.expander("Ẽ fixing (E correction)"):
     e_mode = st.radio("Ẽ mode", ["Free (learned)", "Fixed: constant", "Fixed: exponential"], index=0)
@@ -641,7 +729,7 @@ with tb[2]:
             st.stop()
         prog = st.progress(0); ph = st.empty()
         st.session_state.nets, st.session_state.hist = train(
-            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3, fix_E=fix_E)
+            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3, causal_rw=causal_rw, fix_E=fix_E)
         st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
@@ -909,10 +997,20 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
         for i, r in enumerate(runs):
             Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i])**2)
             res, hc, _ = residual(h_nets[i], psi, e_net, TC[i], r["w"])
+            
+            # --- Physics residual with optional causal + 1/h³ weighting ---
+            res_sq = res ** 2
+            
+            if cfg.get("causal"):
+                w_c = causal_weights(TC[i].detach(), ep, epochs)
+                res_sq = res_sq * w_c
+            
             if cfg.get("rw"):                                 # 1/h³ reweight (capped)
                 wgt = torch.clamp(1.0/(hc.detach()**3 + 1e-4), max=100.0)
-                res = res * (wgt / wgt.mean())
-            Lp = Lp + torch.mean(res**2)
+                res_sq = res_sq * (wgt / wgt.mean())
+            
+            Lp = Lp + torch.mean(res_sq)
+            
             if cfg.get("mono") and not cfg.get("psipar"):     # Ψ monotone-decay penalty
                 dp = torch.autograd.grad(psi(TC[i]), TC[i], torch.ones_like(TC[i]), create_graph=True)[0]
                 Lm = Lm + torch.mean(torch.relu(dp)**2)
@@ -941,30 +1039,37 @@ def individual_configs():
     yield ("PsiPar",              dict(psipar=True))
     yield ("mono",                dict(mono=True))
     yield ("1/h³ reweight",       dict(rw=True))
+    yield ("causal",              dict(causal=True))               # NEW
     yield ("E=const",             dict(emode="const"))
     yield ("E=exp",               dict(emode="exp"))
     yield ("E=exp+autofill",      dict(emode="exp", autofill=True))
 
+
 def exhaustive_configs():   # 60 pruned combos
-    for early, psipar, rw in itertools.product([False, True], repeat=3):
+    for early, psipar, rw, causal in itertools.product([False, True], repeat=4):
         for mono in ([False] if psipar else [False, True]):
             for emode in ("free", "const", "exp"):
                 for autofill in ([False] if emode == "free" else [False, True]):
-                    cfg = dict(early=early, psipar=psipar, mono=mono, rw=rw, emode=emode, autofill=autofill)
+                    cfg = dict(early=early, psipar=psipar, mono=mono, rw=rw, causal=causal, emode=emode, autofill=autofill)
                     yield (cfg_name(cfg), cfg)
+
 
 def curated_configs():      # sensible stacks, incl. two "full" stacks
     for c in individual_configs(): yield c
     yield ("early+rw",                dict(early=True, rw=True))
+    yield ("early+causal",            dict(early=True, causal=True))       # NEW
     yield ("early+psipar",            dict(early=True, psipar=True))
     yield ("psipar+exp+autofill",     dict(psipar=True, emode="exp", autofill=True))
     yield ("early+mono+rw",           dict(early=True, mono=True, rw=True))
+    yield ("early+causal+rw",         dict(early=True, causal=True, rw=True))  # NEW
     yield ("early+rw+exp+autofill",   dict(early=True, rw=True, emode="exp", autofill=True))
     yield ("full(mono)",              dict(early=True, mono=True, rw=True, emode="exp", autofill=True))
     yield ("full(psipar)",            dict(early=True, psipar=True, rw=True, emode="exp", autofill=True))
+    yield ("full(causal)",            dict(early=True, causal=True, rw=True, emode="exp", autofill=True))  # NEW
+
 
 def cfg_name(cfg):
-    p = [k for k in ("early","psipar","mono","rw","autofill") if cfg.get(k)]
+    p = [k for k in ("early","psipar","mono","rw","causal","autofill") if cfg.get(k)]
     if cfg.get("emode","free") != "free": p.append("E="+cfg["emode"])
     return "+".join(p) if p else "baseline"
 
