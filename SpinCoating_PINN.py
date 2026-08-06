@@ -337,15 +337,29 @@ class ConcentrationNet(nn.Module):
 def residual_coupled(h_net, c_net, cp, tau, w_norm):
     """Two-component physics residual of the coupled system."""
     psi0, gamma, e0, c0, m = cp()
-    h = h_net(tau, 1.0); c = c_net(tau, c0)
-    dh = torch.autograd.grad(h.sum(), tau, create_graph=True, retain_graph=True)[0]
-    dc = torch.autograd.grad(c.sum(), tau, create_graph=True, retain_graph=True)[0]
+    tau_req = tau.requires_grad_()
+    h = h_net(tau_req, 1.0); c = c_net(tau_req, c0)
+    dh = torch.autograd.grad(h.sum(), tau_req, create_graph=True, retain_graph=True)[0]
+    dc = torch.autograd.grad(c.sum(), tau_req, create_graph=True, retain_graph=True)[0]
     cc = torch.clamp(c, 1e-6, 1.0); hh = torch.clamp(h, 1e-6, None)
     Psi = psi0 * (cc / c0) ** gamma
     E = e0 * (cc / c0) ** m
     R1 = dh + (w_norm ** 2) * Psi * h ** 3 + E          # thickness ODE
     R2 = dc + E * (1.0 - cc) / hh                       # solvent balance
     return R1, R2, h, c, Psi, E
+
+def ThicknessNet(h, L):
+    """Per-run film thickness: h(τ)=exp(-softplus(NN(τ))) → h(0)=1 exact, h>0 always."""
+    class Net(nn.Module):
+        def __init__(self):
+            super().__init__()
+            nets = [nn.Linear(1, h), nn.Tanh()]
+            for _ in range(L - 1): nets += [nn.Linear(h, h), nn.Tanh()]
+            nets += [nn.Linear(h, 1)]
+            self.net = nn.Sequential(*nets); self.sp = nn.Softplus()
+        def forward(self, tau, h0):
+            return h0 * torch.exp(-tau * self.sp(self.net(tau)))
+    return Net()
 
 # ═══════════════ GATES (a)–(e): ASSERT COUPLED MODEL BEHAVIOR ═══════════════
 if __name__ == "__main__":
@@ -622,6 +636,67 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
             ph.caption(f"Phase C epoch {ep+1}/{epochs} · L_data {Ld_C:.5f} · L_phys {Lp.item():.5f}")
 
     return dict(hn=h_nets, psi=psi, en=e, Ld_A=Ld_A, Ld_C=Ld_C), hist
+
+def train_coupled(data, h, L, epochs, lr, w_d, w_p, lam_c, seed, prog, ph):
+    torch.manual_seed(seed)
+    h_nets = [ThicknessNet(h, L) for _ in data["runs"]]
+    c_nets = [ConcentrationNet(h, L) for _ in data["runs"]]
+    cp = ConstitutiveParams(psi0=psi_A, gamma=gamma, e0=E_B, c0=c0, m=m_evap, learn_m=False)
+    # Phase A: data-only on h_nets
+    oA = optim.Adam([p for n in h_nets for p in n.parameters()], lr=lr)
+    Ld_A = 0.0
+    for ep in range(epochs // 2):
+        oA.zero_grad(); Ld = 0.0
+        for i, r in enumerate(data["runs"]):
+            td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
+            hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
+            Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd) ** 2)
+        Ld = Ld / len(data["runs"]); Ld.backward(); oA.step(); Ld_A = float(Ld.item())
+        if ep % 20 == 0 or ep == (epochs // 2) - 1:
+            prog.progress((ep + 1) / (epochs // 2) * 0.5)
+            ph.caption(f"Phase A epoch {ep+1}/{epochs//2} · L_data {Ld_A:.5f}")
+    # Phase C: joint, two-component physics
+    pC = ([p for n in h_nets for p in n.parameters()] +
+          [p for n in c_nets for p in n.parameters()] + list(cp.parameters()))
+    oC = optim.Adam(pC, lr=lr); hist = dict(d=[], p=[], t=[]); Ld_C = 0.0
+    for ep in range(epochs // 2, epochs):
+        oC.zero_grad(); Ld = Lp = 0.0
+        for i, r in enumerate(data["runs"]):
+            td = torch.tensor(r["tau_s"], dtype=torch.float32).reshape(-1, 1)
+            hd = torch.tensor(r["h_meas"], dtype=torch.float32).reshape(-1, 1)
+            Ld = Ld + torch.mean((h_nets[i](td, 1.0) - hd) ** 2)
+            tc = torch.tensor(r["tau_c"], dtype=torch.float32).reshape(-1, 1).requires_grad_(True)
+            R1, R2, *_ = residual_coupled(h_nets[i], c_nets[i], cp, tc, r["w"])
+            Lp = Lp + torch.mean(R1 ** 2) + lam_c * torch.mean(R2 ** 2)
+        nrun = len(data["runs"]); Ld = Ld / nrun; Lp = Lp / nrun
+        loss = w_d * Ld + w_p * Lp; loss.backward(); oC.step()
+        hist["d"].append(Ld.item()); hist["p"].append(Lp.item()); hist["t"].append(loss.item())
+        Ld_C = float(Ld.item())
+        if ep % 20 == 0 or ep == epochs - 1:
+            prog.progress(0.5 + (ep - epochs // 2 + 1) / (epochs - epochs // 2) * 0.5)
+            ph.caption(f"Phase C epoch {ep+1}/{epochs} · L_data {Ld_C:.5f} · L_phys {Lp.item():.5f}")
+    return dict(hn=h_nets, cn=c_nets, cp=cp, coupled=True, Ld_A=Ld_A, Ld_C=Ld_C), hist
+
+def evaluate_coupled(nets, data):
+    with torch.no_grad():
+        t = torch.tensor(data["tau"], dtype=torch.float32).reshape(-1, 1)
+        psi0, gamma, e0, c0, m = nets["cp"]()
+        hs, cs, psis, es, Ks = [], [], [], [], []
+        for i, r in enumerate(data["runs"]):
+            h = nets["hn"][i](t, 1.0); c = nets["cn"][i](t, c0)
+            cc = torch.clamp(c, 1e-6, 1.0)
+            Psi = psi0 * (cc / c0) ** gamma; E = e0 * (cc / c0) ** m
+            hs.append(h.numpy().flatten()); cs.append(c.numpy().flatten())
+            psis.append(Psi.numpy().flatten()); es.append(E.numpy().flatten())
+            Ks.append((r["w"] ** 2) * Psi.numpy().flatten())
+        return dict(coupled=True, hs=hs, cs=cs, psis=psis, es=es, Ks=Ks,
+                    theta=dict(psi0=psi0.item(), gamma=gamma.item(), e0=e0.item(),
+                               c0=c0.item(), m=m.item()))
+
+def param_errors(nets, data):
+    P = data["params_true"]; fit = evaluate_coupled(nets, data)["theta"]
+    errs = {k: abs(fit[k] - P[k]) / max(abs(P[k]), 1e-8) * 100 for k in ("psi0", "gamma", "e0", "c0")}
+    return fit, errs
 
 def evaluate(nets, data):
     with torch.no_grad():
