@@ -1277,16 +1277,54 @@ with tb[3]:
         for r in d2["runs"]:
             hh, cc = simulate_coupled(float(r["w"]), P, d2["tau"])
             pred_h.append(hh); pred_c.append(cc)
-        order = ["psi0", "gamma", "e0", "c0"] + (["m"] if xf["fix_m"] is None else [])
+        ctruth = bool(d2.get("params_true") is not None)
         rows = []
-        for k in order:
-            row = {"param": k, "fitted": round(float(P[k]), 4)}
+        for k in PARAM_ORDER:
+            if k in xf["fixed"]:
+                rows.append({"param": f"{k} (fixed)", "fitted": round(float(xf["fixed"][k]), 4)})
+                continue
+            row = {"param": k, "fitted": round(float(xf["theta"][k]), 4)}
             if ctruth:
                 tv = float(d2["params_true"][k])
                 row["true"] = round(tv, 4)
-                row["rel err %"] = round(abs(P[k] - tv) / max(abs(tv), 1e-8) * 100, 1)
+                row["rel err %"] = round(abs(xf["theta"][k] - tv) / max(abs(tv), 1e-8) * 100, 1)
             rows.append(row)
         st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+        st.markdown("**Profile likelihood — identifiability certificate**")
+        pc1, pc2, pc3 = st.columns(3)
+        with pc1:
+            pl_param = st.selectbox("profile parameter", PARAM_ORDER,
+                                    index=PARAM_ORDER.index("gamma"))
+        with pc2:
+            pl_n = st.number_input("grid points", 9, 25, 15, 2)
+        with pc3:
+            st.button("Run profile likelihood", use_container_width=True, key="pl_run")
+        if st.session_state.get("pl_run"):
+            with st.spinner(f"profiling {pl_param} ({int(pl_n)} refits)…"):
+                st.session_state["pl"] = profile_likelihood(
+                    st.session_state.data, xf, param=pl_param,
+                    n_grid=int(pl_n), rel_weight=rel_weight, seed=seed)
+        pl_res = st.session_state.get("pl")
+        if pl_res is not None:
+            f, a = plt.subplots(figsize=(7, 3.4), facecolor="none")
+            if pl_res["param"] == "gamma": a.set_xscale("log")
+            a.plot(pl_res["grid"], pl_res["dcost"], "o-", color=CY, lw=2)
+            a.axhline(pl_res["thr"], color=RD, ls="--", label="95% threshold (χ²₁/2)")
+            if pl_res["ci_lo"] is not None:
+                a.axvline(pl_res["ci_lo"], color=AM, ls=":")
+                a.axvline(pl_res["ci_hi"], color=AM, ls=":")
+            a.set_xlabel(pl_res["param"]); a.set_ylabel("Δcost")
+            a.legend(frameon=False, fontsize=8); ax0(a)
+            a.set_title(f"Profile likelihood — {pl_res['param']}")
+            st.pyplot(f)
+            if pl_res["bounded"]:
+                st.caption(f"95% CI for {pl_res['param']}: "
+                           f"[{pl_res['ci_lo']:.3f}, {pl_res['ci_hi']:.3f}] — bounded (identifiable).")
+            else:
+                st.caption(f"95% CI for {pl_res['param']} is UNBOUNDED within "
+                           f"[{pl_res['grid'][0]:.2f}, {pl_res['grid'][-1]:.2f}] — "
+                           "practically unidentifiable from these data.")
         pp, pe = psi_of_c(pred_c[0], P), e_of_c(pred_c[0], P)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Ψ(τ) err", f"{rel2(pp, d2['psi_runs'][0]):.1f}%" if ctruth else "—")
