@@ -305,6 +305,48 @@ def simulate_coupled(w, P, tau):
                     method="RK45", rtol=1e-8, atol=1e-10)
     return sol.y[0], sol.y[1]
 
+class ConstitutiveParams(nn.Module):
+    """Learnable shared scalars θ=(Ψ0,γ,E0,c0[,m]); positivity built in; m frozen by default."""
+    def __init__(self, psi0=1.2, gamma=2.5, e0=3.0, c0=0.7, m=1.0, learn_m=False):
+        super().__init__()
+        self.sp = nn.Softplus()
+        self.lpsi0 = nn.Parameter(torch.tensor(inv_softplus(psi0)))
+        self.lgamma = nn.Parameter(torch.tensor(inv_softplus(gamma)))
+        self.le0 = nn.Parameter(torch.tensor(inv_softplus(e0)))
+        self.rc0 = nn.Parameter(torch.tensor(float(np.log(c0 / (1 - c0)))))
+        self.lm = nn.Parameter(torch.tensor(inv_softplus(m)), requires_grad=learn_m)
+    def forward(self):
+        psi0 = self.sp(self.lpsi0) + 1e-3
+        gamma = self.sp(self.lgamma) + 1e-2
+        e0 = self.sp(self.le0) + 1e-3
+        c0 = torch.sigmoid(self.rc0) * 0.99 + 1e-3      # keeps c0 in (0,1)
+        m = self.sp(self.lm)
+        return psi0, gamma, e0, c0, m
+
+class ConcentrationNet(nn.Module):
+    """Per-run solvent fraction: c(τ)=c0*exp(-τ*softplus(NN(τ))) → c(0)=c0 exact, c>0 always."""
+    def __init__(self, h=32, L=3):
+        super().__init__()
+        L_ = [nn.Linear(1, h), nn.Tanh()]
+        for _ in range(L - 1): L_ += [nn.Linear(h, h), nn.Tanh()]
+        L_ += [nn.Linear(h, 1)]
+        self.net = nn.Sequential(*L_); self.sp = nn.Softplus()
+    def forward(self, tau, c0):
+        return c0 * torch.exp(-tau * self.sp(self.net(tau)))
+
+def residual_coupled(h_net, c_net, cp, tau, w_norm):
+    """Two-component physics residual of the coupled system."""
+    psi0, gamma, e0, c0, m = cp()
+    h = h_net(tau, 1.0); c = c_net(tau, c0)
+    dh = torch.autograd.grad(h.sum(), tau, create_graph=True, retain_graph=True)[0]
+    dc = torch.autograd.grad(c.sum(), tau, create_graph=True, retain_graph=True)[0]
+    cc = torch.clamp(c, 1e-6, 1.0); hh = torch.clamp(h, 1e-6, None)
+    Psi = psi0 * (cc / c0) ** gamma
+    E = e0 * (cc / c0) ** m
+    R1 = dh + (w_norm ** 2) * Psi * h ** 3 + E          # thickness ODE
+    R2 = dc + E * (1.0 - cc) / hh                       # solvent balance
+    return R1, R2, h, c, Psi, E
+
 # ═══════════════ GATES (a)–(e): ASSERT COUPLED MODEL BEHAVIOR ═══════════════
 if __name__ == "__main__":
     P = dict(psi0=1.2, gamma=2.5, e0=3.0, c0=0.7, m=1.0)
