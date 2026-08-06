@@ -928,7 +928,7 @@ else:
     gen_btn = False
 train_btn = st.sidebar.button("Train PINN" if not ("EXACT" in globals() and EXACT) else "Fit Exact ODE", use_container_width=True, key="train_btn")
 
-for k in ("data", "nets", "hist"):
+for k in ("data", "nets", "hist", "exact_fit"):
     st.session_state.setdefault(k, None)
 if gen_btn:
     st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, noise_code, n_colloc, seed,
