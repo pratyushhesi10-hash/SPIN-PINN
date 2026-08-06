@@ -281,6 +281,30 @@ def estimate_E_late(runs, k=4):
     slope, intercept = np.polyfit(np.concatenate(ts), np.concatenate(ys), 1)
     return float(np.exp(intercept)), float(-slope)
 
+# ═══════════════ FIX 1 / PHASE 1: COUPLED SOLVENT MODEL ═══════════════
+# Well-mixed solvent balance derivation (dimensionless):
+#   V_solvent = c*h ;  d(c*h)/dτ = -E - c*(w²Ψh³)        (evap pure solvent + mixed outflow)
+#   dh/dτ    = -w²Ψh³ - E
+#   => h*dc/dτ = -E(1-c)  =>  dc/dτ = -E(1-c)/h
+# Constitutive laws (SHARED across runs, fixed functional forms):
+#   Ψ(c) = Ψ0*(c/c0)^γ   (thinning coeff ~ 1/viscosity: falls as solvent leaves)
+#   E(c) = E0*(c/c0)^m   (evaporation falls as surface becomes polymer-rich)
+# Unknowns θ = (Ψ0, γ, E0, c0) with m fixed by slider (4 free scalars).
+def psi_of_c(c, P):
+    return P["psi0"] * (np.clip(c, 1e-6, None) / P["c0"]) ** P["gamma"]
+def e_of_c(c, P):
+    return P["e0"] * (np.clip(c, 1e-6, None) / P["c0"]) ** P["m"]
+
+def simulate_coupled(w, P, tau):
+    """Forward integrate the coupled 2-ODE system for one run. Returns h(τ), c(τ)."""
+    def rhs(t, y):
+        h, c = max(y[0], 1e-6), min(max(y[1], 1e-6), 1.0)
+        Ps, E = psi_of_c(c, P), e_of_c(c, P)
+        return [-(w ** 2) * Ps * h ** 3 - E, -E * (1.0 - c) / h]
+    sol = solve_ivp(rhs, (0, 1), [1.0, P["c0"]], t_eval=tau,
+                    method="RK45", rtol=1e-8, atol=1e-10)
+    return sol.y[0], sol.y[1]
+
 # ============================================================
 # FIX 5: CAUSALITY-RESPECTING REWEIGHTING
 # Progressively unlocks later time points only after earlier
