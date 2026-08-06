@@ -22,29 +22,4 @@ __pycache__/
 # Dependencies
 .venv/
 venv/
-node_modules/
-
-# Build artifacts
-dist/
-build/
-target/
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# MyPy
-.mypy_cache/
-
-# Pytest
-.pytest_cache/
-
-# Compiled
-*.o
-*.obj
-*.so
-*.a
-*.dll
-*.exe
 ```
