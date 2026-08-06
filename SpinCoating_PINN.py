@@ -305,6 +305,22 @@ def simulate_coupled(w, P, tau):
                     method="RK45", rtol=1e-8, atol=1e-10)
     return sol.y[0], sol.y[1]
 
+# ═══════════════ GATES (a)–(e): ASSERT COUPLED MODEL BEHAVIOR ═══════════════
+if __name__ == "__main__":
+    P = dict(psi0=1.2, gamma=2.5, e0=3.0, c0=0.7, m=1.0)
+    tau = np.linspace(0, 1, 500)
+    res = {}
+    for rpm, w in ((3000, 1.0), (4500, 1.5)):
+        h, c = simulate_coupled(w, P, tau)
+        Ps, E = psi_of_c(c, P), e_of_c(c, P)
+        res[rpm] = h
+        assert abs(h[0] - 1) < 1e-6 and np.all(np.diff(h) <= 1e-9), f"(a) failed at {rpm}rpm"
+        assert abs(c[0] - P["c0"]) < 1e-6 and np.all(np.diff(c) <= 1e-9), f"(b) failed at {rpm}rpm"
+        assert np.all(Ps > 0) and np.all(np.diff(Ps) <= 1e-12), f"(d) failed at {rpm}rpm"
+        assert np.all(E >= 0) and np.all(np.diff(E) <= 1e-12), f"(e) failed at {rpm}rpm"
+    assert res[4500][-1] < res[3000][-1], "(c) faster spin → thinner: FAILED"
+    print("gate OK · h(1): 3000rpm=%.3f 4500rpm=%.3f" % (res[3000][-1], res[4500][-1]))
+
 # ============================================================
 # FIX 5: CAUSALITY-RESPECTING REWEIGHTING
 # Progressively unlocks later time points only after earlier
