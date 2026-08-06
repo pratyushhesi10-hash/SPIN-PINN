@@ -746,10 +746,18 @@ source = st.sidebar.radio("Data source", ["Synthetic", "Manual / CSV"], index=0,
 SRC_SYN = (source == "Synthetic")
 
 with st.sidebar.expander("Physics", expanded=True):
+    model_form = st.radio("Model form", ["Uncoupled Ψ(τ), Ẽ(τ) (baseline)", "Coupled solvent c(τ) (Fix 1)"],
+        help="Coupled: Ψ,Ẽ are fixed constitutive functions of solvent fraction c(τ); "
+             "the inverse problem estimates (Ψ0,γ,E0,c0) instead of two free curves.")
+    coupled = model_form.startswith("Coupled")
     psi_A = st.slider("Ψ_A · convective strength", 0.1, 3.0, 1.2, 0.05)
-    psi_d = st.slider("Ψ decay", 0.5, 6.0, 3.0, 0.1)
+    psi_d = st.slider("Ψ decay", 0.5, 6.0, 3.0, 0.1, disabled=coupled)
     E_B   = st.slider("E_B · evaporation strength", 0.5, 6.0, 3.0, 0.1)
-    E_d   = st.slider("E decay", 0.5, 6.0, 3.5, 0.1)
+    E_d   = st.slider("E decay", 0.5, 6.0, 3.5, 0.1, disabled=coupled)
+    c0 = st.slider("c₀ · initial solvent fraction", 0.30, 0.95, 0.70, 0.05, disabled=not coupled)
+    gamma = st.slider("γ · thinning–concentration exponent", 0.5, 5.0, 2.5, 0.1, disabled=not coupled)
+    m_evap = st.slider("m · evaporation exponent", 0.1, 2.0, 1.0, 0.1, disabled=not coupled)
+    lam_c = st.slider("λ_c · solvent-balance weight", 0.1, 5.0, 1.0, 0.1, disabled=not coupled)
     rpm_a = st.slider("Run A · RPM", 1000, 6000, 3000, 100)
     rpm_b = st.slider("Run B · RPM", 1000, 6000, 4500, 100)
 with st.sidebar.expander("Synthetic data", expanded=SRC_SYN):
@@ -827,7 +835,8 @@ for k in ("data", "nets", "hist"):
     st.session_state.setdefault(k, None)
 if gen_btn:
     st.session_state.data = generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, noise_code, n_colloc, seed,
-                                          dense_early=dense_early, early_frac=early_frac, early_span=early_span)
+                                          dense_early=dense_early, early_frac=early_frac, early_span=early_span,
+                                          coupled=coupled, c0=c0, gamma=gamma, m_evap=m_evap)
     st.session_state.nets = st.session_state.hist = None
 
 # ─────────────────────────── Tabs ───────────────────────────
@@ -895,8 +904,12 @@ with tb[2]:
                        "data in the **Manual / CSV** tab first.")
             st.stop()
         prog = st.progress(0); ph = st.empty()
-        st.session_state.nets, st.session_state.hist = train(
-            st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3, causal_rw=causal_rw, fix_E=fix_E)
+        if coupled:
+            st.session_state.nets, st.session_state.hist = train_coupled(
+                st.session_state.data, hid, lay, epochs, lr, w_d, w_p, lam_c, seed, prog, ph)
+        else:
+            st.session_state.nets, st.session_state.hist = train(
+                st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3, causal_rw=causal_rw, fix_E=fix_E)
         st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
@@ -911,7 +924,12 @@ with tb[2]:
 with tb[3]:
     st.markdown("#### Inverse recovery")
     if st.session_state.nets and st.session_state.data:
-        d, r = st.session_state.data, evaluate(st.session_state.nets, st.session_state.data)
+        d = st.session_state.data
+        if coupled:
+            r = evaluate_coupled(st.session_state.nets, st.session_state.data)
+            fit_params, param_errs = param_errors(st.session_state.nets, st.session_state.data)
+        else:
+            r = evaluate(st.session_state.nets, st.session_state.data)
         rel = lambda p, t: float(np.mean(np.abs(p - t) / (np.abs(t) + 1e-8)) * 100)
         comb = lambda K, h, e: K*h**3 + e
         truth = bool(d.get("has_truth", False)) and d.get("psi") is not None
@@ -929,14 +947,20 @@ with tb[3]:
             return rel(hd, run["h_meas"]), "fit"
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Ψ(τ) error", f"{rel(r['psi'], d['psi']):.1f}%" if truth else "—")
-        m2.metric("E(τ) error", f"{rel(r['e'], d['e']):.1f}%" if truth else "—")
-        he0, lab0 = h_err_for(0)
-        m3.metric(f"h run A ({lab0})", f"{he0:.2f}%")
-        if n >= 2:
-            he1, lab1 = h_err_for(1); m4.metric(f"h run B ({lab1})", f"{he1:.2f}%")
+        if coupled:
+            m1.metric("Ψ₀ error", f"{param_errs['psi0']:.1f}%")
+            m2.metric("γ error", f"{param_errs['gamma']:.1f}%")
+            m3.metric("E₀ error", f"{param_errs['e0']:.1f}%")
+            m4.metric("c₀ error", f"{param_errs['c0']:.1f}%")
         else:
-            m4.metric("h run B", "—")
+            m1.metric("Ψ(τ) error", f"{rel(r['psi'], d['psi']):.1f}%" if truth else "—")
+            m2.metric("E(τ) error", f"{rel(r['e'], d['e']):.1f}%" if truth else "—")
+            he0, lab0 = h_err_for(0)
+            m3.metric(f"h run A ({lab0})", f"{he0:.2f}%")
+            if n >= 2:
+                he1, lab1 = h_err_for(1); m4.metric(f"h run B ({lab1})", f"{he1:.2f}%")
+            else:
+                m4.metric("h run B", "—")
 
         c1, c2 = st.columns(2)
         with c1:
