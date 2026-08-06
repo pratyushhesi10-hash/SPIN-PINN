@@ -313,64 +313,102 @@ def simulate_coupled(w, P, tau):
 #   fit:     least_squares on h(τ_meas; θ, w_run) - h_meas
 # The ODE holds exactly (no soft loss); all information comes from data misfit.
 
-def _exact_fun_unpack(data, fix_m, rel_weight):
-    runs = data["runs"]
+# ═══════════════ PHASE 3: fix-γ + PROFILE LIKELIHOOD ═══════════════
+PARAM_ORDER  = ["psi0", "gamma", "e0", "c0", "m"]
+PARAM_BOUNDS = {"psi0": (1e-3, 20.0), "gamma": (0.1, 8.0), "e0": (1e-3, 20.0),
+                "c0": (0.05, 0.99), "m": (0.05, 4.0)}
+CHI2_95_1DF = 3.8414588          # 95% threshold, 1 dof; use half of it on cost
+                                 # because least_squares cost = 0.5*sum(res²)
+
+def _exact_fun_unpack(data, fixed, rel_weight):
+    """fixed = dict {param: value} held constant; free params follow PARAM_ORDER."""
+    runs  = data["runs"]
     t_obs = [np.asarray(r["tau_s"], float) for r in runs]
     h_obs = [np.asarray(r["h_meas"], float) for r in runs]
     w_obs = [float(r["w"]) for r in runs]
-    # rel weighting = correct weighting for proportional noise (floor avoids
-    # amplifying the clipped, near-zero tail where data carry no information)
-    wts = [1.0 / np.maximum(h, 1e-3) for h in h_obs] if rel_weight \
-            else [np.ones_like(h) for h in h_obs]
+    wts  = [1.0 / np.maximum(h, 1e-3) for h in h_obs] if rel_weight \
+           else [np.ones_like(h) for h in h_obs]
     n_tot = sum(h.size for h in h_obs)
+    free  = [k for k in PARAM_ORDER if k not in fixed]
 
     def unpack(x):
-        P = dict(psi0=float(x[0]), gamma=float(x[1]), e0=float(x[2]), c0=float(x[3]))
-        P["m"] = float(fix_m) if fix_m is not None else float(x[4])
+        P = dict(fixed)
+        for k, v in zip(free, x): P[k] = float(v)
         return P
 
     def fun(x):
-        P = unpack(x)
-        out = []
+        P = unpack(x); out = []
         for t, h, w, wt in zip(t_obs, h_obs, w_obs, wts):
             try:
-                hm, _ = simulate_coupled(w, P, t)      # Phase-1 forward model
+                hm, _ = simulate_coupled(w, P, t)
             except Exception:
-                return np.full(n_tot, 1e3)             # integration failure -> huge cost
+                return np.full(n_tot, 1e3)
             if hm.shape != h.shape or not np.all(np.isfinite(hm)):
                 return np.full(n_tot, 1e3)
             out.append((hm - h) * wt)
         return np.concatenate(out)
 
-    return fun, unpack
+    return fun, unpack, free
 
-
-def fit_exact(data, n_starts=6, fix_m=1.0, rel_weight=True, seed=42):
-    """Multi-start bounded least-squares fit of the coupled model.
-    fix_m: float -> m fixed (4-param fit); None -> m learned (5-param)."""
+def fit_exact(data, n_starts=6, fixed=None, rel_weight=True, seed=42):
+    """fixed=None  ->  defaults to {"m": 1.0} (same behaviour as before)."""
+    fixed = dict(fixed) if fixed else {"m": 1.0}
     t0 = time.time()
-    fun, unpack = _exact_fun_unpack(data, fix_m, rel_weight)
-    lo = [1e-3, 0.1, 1e-3, 0.05]; hi = [20.0, 8.0, 20.0, 0.99]
-    if fix_m is None:
-        lo += [0.05]; hi += [4.0]
+    fun, unpack, free = _exact_fun_unpack(data, fixed, rel_weight)
+    lo = [PARAM_BOUNDS[k][0] for k in free]; hi = [PARAM_BOUNDS[k][1] for k in free]
     rng = np.random.default_rng(seed)
-    e_init = estimate_E_late_sweep(data) or (3.0, 3.5)   # smart start for E0
-    starts = [np.array([1.0, 2.5, e_init[0], 0.7] + ([] if fix_m is not None else [1.0]))]
+    defaults = {"psi0": 1.0, "gamma": 2.5, "e0": 3.0, "c0": 0.7, "m": 1.0}
+    e_init = estimate_E_late_sweep(data)
+    if e_init is not None: defaults["e0"] = e_init[0]
+    starts = [np.clip(np.array([defaults[k] for k in free]), lo, hi)]
     for _ in range(int(n_starts) - 1):
-        starts.append(np.array(
-            [10 ** rng.uniform(np.log10(0.3), np.log10(4.0)),
-             rng.uniform(1.0, 4.0),
-             10 ** rng.uniform(np.log10(0.5), np.log10(6.0)),
-             rng.uniform(0.4, 0.9)]
-            + ([] if fix_m is not None else [rng.uniform(0.5, 2.0)])))
+        starts.append(np.clip(np.array([rng.uniform(l, h) for l, h in zip(lo, hi)]), lo, hi))
     best = None
     for x0 in starts:
         r = least_squares(fun, x0, bounds=(lo, hi), method="trf",
                           ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=400)
-        if best is None or r.cost < best.cost:
-            best = r
+        if best is None or r.cost < best.cost: best = r
     return dict(theta=unpack(best.x), cost=float(best.cost), jac=best.jac,
-                nfev=int(best.nfev), sec=time.time() - t0, fix_m=fix_m)
+                nfev=int(best.nfev), sec=time.time() - t0,
+                fixed=fixed, free=free, fix_m=fixed.get("m"))   # fix_m kept for old UI code
+
+def profile_likelihood(data, base, param="gamma", n_grid=17,
+                       rel_weight=True, seed=42, n_starts=2):
+    """Fix `param` on a grid, re-optimize the rest, record the cost.
+    95% CI = grid region where Δcost <= CHI2_95_1DF / 2."""
+    lo_b, hi_b = PARAM_BOUNDS[param]
+    if param == "gamma":
+        grid = np.logspace(np.log10(max(lo_b, 0.1)), np.log10(hi_b), int(n_grid))
+    else:
+        c = base["theta"].get(param, base["fixed"].get(param, 1.0))
+        grid = np.linspace(max(lo_b, 0.25 * abs(c)), min(hi_b, 4.0 * abs(c)), int(n_grid))
+    costs = []
+    for g in grid:
+        fixed = dict(base["fixed"]); fixed[param] = float(g)
+        fun, unpack, free = _exact_fun_unpack(data, fixed, rel_weight)
+        lo = [PARAM_BOUNDS[k][0] for k in free]; hi = [PARAM_BOUNDS[k][1] for k in free]
+        x0 = np.clip(np.array([base["theta"].get(k, base["fixed"].get(k, 1.0))
+                               for k in free]), lo, hi)
+        rng = np.random.default_rng(seed)
+        starts = [x0] + [np.clip(np.array([rng.uniform(l, h) for l, h in zip(lo, hi)]), lo, hi)
+                         for _ in range(int(n_starts) - 1)]
+        best = None
+        for s0 in starts:
+            r = least_squares(fun, s0, bounds=(lo, hi), method="trf",
+                              ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=300)
+            if best is None or r.cost < best.cost: best = r
+        costs.append(best.cost)
+    costs = np.array(costs)
+    dcost = costs - min(costs.min(), base["cost"])
+    thr   = 0.5 * CHI2_95_1DF
+    below = np.where(dcost <= thr)[0]
+    if len(below):
+        ci_lo, ci_hi = float(grid[below.min()]), float(grid[below.max()])
+        bounded = bool(below.min() > 0 and below.max() < len(grid) - 1)
+    else:
+        ci_lo = ci_hi = None; bounded = False
+    return dict(param=param, grid=grid, dcost=dcost, thr=thr,
+                ci_lo=ci_lo, ci_hi=ci_hi, bounded=bounded)
 
 class ConstitutiveParams(nn.Module):
     """Learnable shared scalars θ=(Ψ0,γ,E0,c0[,m]); positivity built in; m frozen by default."""
