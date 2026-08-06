@@ -738,6 +738,20 @@ plt.rcParams.update({"figure.facecolor": "none", "axes.facecolor": "none",
 CY, AM, RD = "#4fc3f7", "#ffb74d", "#ef5350"
 def ax0(a): a.tick_params(colors="#b0bec5"); a.grid(alpha=.3); return a
 
+def rel_floored(p, t, floor_frac=0.05):
+    """Mean relative error with the denominator floored at floor_frac × peak(true).
+
+    The raw metric |p−t|/(|t|+1e-8) is dominated by the late-τ tail: once the
+    true curve decays to ~1e-4…1e-8, tiny absolute offsets read as 100–1000%
+    and hijack the mean. Flooring the denominator at 5% of the curve's peak
+    makes the number measure the region where the signal actually lives.
+    It does NOT hide body mismatches: a mirror-image Ψ still scores ~100%+.
+    """
+    p = np.asarray(p, dtype=float); t = np.asarray(t, dtype=float)
+    peak = max(float(np.max(np.abs(t))), 1e-12)
+    denom = np.maximum(np.abs(t), floor_frac * peak)
+    return float(np.mean(np.abs(p - t) / denom) * 100)
+
 # ─────────────────────────── Sidebar ───────────────────────────
 st.sidebar.markdown("### Controls")
 source = st.sidebar.radio("Data source", ["Synthetic", "Manual / CSV"], index=0,
@@ -945,9 +959,20 @@ with tb[3]:
 
         m1, m2, m3, m4 = st.columns(4)
         if coupled_mode:
-            m1.metric("Ψ run A err", f"{rel(r['psis'][0], d['psi_runs'][0]):.1f}%")
-            m2.metric("E run A err", f"{rel(r['es'][0], d['e_runs'][0]):.1f}%")
+            # In coupled mode the achievement is PARAMETER recovery — headline that,
+            # plus a tail-floored curve error (rel_floored) instead of the raw rel().
+            if truth and d.get("params_true") is not None:
+                _, _perr = param_errors(st.session_state.nets, d)
+                m1.metric("worst param err", f"{max(_perr.values()):.1f}%",
+                          help="max rel. error over (Ψ0, γ, E0, c0) — the identifiable quantities")
+                m2.metric("Ψ curve err (floored)",
+                          f"{rel_floored(r['psis'][0], d['psi_runs'][0]):.1f}%",
+                          help="denominator floored at 5% of the true peak so the ~1e-6 tail cannot dominate")
+            else:
+                m1.metric("worst param err", "—")
+                m2.metric("Ψ curve err (floored)", "—")
         else:
+            # uncoupled mode: keep the raw metric for consistency with the paper & sweep CSV
             m1.metric("Ψ(τ) error", f"{rel(r['psi'], d['psi']):.1f}%" if truth else "—")
             m2.metric("E(τ) error", f"{rel(r['e'], d['e']):.1f}%" if truth else "—")
             he0, lab0 = h_err_for(0)
