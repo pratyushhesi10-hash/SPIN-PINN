@@ -1001,21 +1001,20 @@ with tb[2]:
             st.warning("No data loaded yet. Use **Generate data** (synthetic) or load CSV / manual "
                        "data in the **Manual / CSV** tab first.")
             st.stop()
-        prog = st.progress(0); ph = st.empty()
         if EXACT_MODE:
-            # Exact ODE solve via least_squares (Fix 2)
-            fix_m_val = float(m_fix) if fix_m else None
-            res = fit_exact(st.session_state.data, n_starts=n_starts, fix_m=fix_m_val, rel_weight=rel_weight, seed=seed)
-            st.session_state["exact_result"] = res
-            st.success(f"Exact ODE fit complete in {res['sec']:.2f}s (cost={res['cost']:.4g}, nfev={res['nfev']}) — check **Results**.")
-        elif coupled:
-            st.session_state.nets, st.session_state.hist = train_coupled(
-                st.session_state.data, hid, lay, epochs, lr, w_d, w_p, lam_c, seed, prog, ph)
+            with st.spinner("Exact ODE solve (multi-start least squares)…"):
+                xf = fit_exact(st.session_state.data, n_starts=int(n_starts),
+                               fix_m=(float(m_fix) if fix_m else None),
+                               rel_weight=rel_weight, seed=int(seed))
+            st.session_state.exact_fit = xf
+            st.success(f"Exact solve done · cost={xf['cost']:.3e} · {xf['nfev']} rhs solves · "
+                       f"{xf['sec']:.1f}s — see Results.")
         else:
+            prog = st.progress(0); ph = st.empty()
             st.session_state.nets, st.session_state.hist = train(
-                st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph, param_psi, mono_w, reweight_h3, causal_rw=causal_rw, fix_E=fix_E)
-        if not EXACT_MODE:
-            st.success("Training complete — check the **Results** tab.")
+                st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph,
+                param_psi, mono_w, reweight_h3, fix_E=fix_E)
+            st.success("Training complete — check the Results tab.")
     if st.session_state.hist:
         h = st.session_state.hist
         f, a = plt.subplots(figsize=(8, 3.6), facecolor="none")
