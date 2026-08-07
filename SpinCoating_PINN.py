@@ -317,8 +317,6 @@ def simulate_coupled(w, P, tau):
 PARAM_ORDER  = ["psi0", "gamma", "e0", "c0", "m"]
 PARAM_BOUNDS = {"psi0": (1e-3, 20.0), "gamma": (0.1, 8.0), "e0": (1e-3, 20.0),
                 "c0": (0.05, 0.99), "m": (0.05, 4.0)}
-CHI2_95_1DF = 3.8414588          # 95% threshold, 1 dof; use half of it on cost
-                                 # because least_squares cost = 0.5*sum(res²)
 
 def _exact_fun_unpack(data, fixed, rel_weight):
     """fixed = dict {param: value} held constant; free params follow PARAM_ORDER."""
@@ -372,43 +370,77 @@ def fit_exact(data, n_starts=6, fixed=None, rel_weight=True, seed=42):
                 nfev=int(best.nfev), sec=time.time() - t0,
                 fixed=fixed, free=free, fix_m=fixed.get("m"))   # fix_m kept for old UI code
 
-def profile_likelihood(data, base, param="gamma", n_grid=17,
-                       rel_weight=True, seed=42, n_starts=2):
-    """Fix `param` on a grid, re-optimize the rest, record the cost.
-    95% CI = grid region where Δcost <= CHI2_95_1DF / 2."""
-    lo_b, hi_b = PARAM_BOUNDS[param]
-    if param == "gamma":
-        grid = np.logspace(np.log10(max(lo_b, 0.1)), np.log10(hi_b), int(n_grid))
+# ═══════════════ PHASE 3 · IDENTIFIABILITY CERTIFICATE ═══════════════
+# 3a: Fisher Information Matrix from the exact-solve Jacobian (no extra solves)
+# 3b: Profile likelihood (Raue et al. 2009): sweep one parameter, re-optimize
+#     the rest; 95% CI = {g : Δcost <= chi2(1,0.95)/2}.
+# Requires Phase 2: _exact_fun_unpack, PARAM_BOUNDS, fit_exact (returns jac, fixed).
+CHI2_95_1DF = 1.920729   # = scipy.stats.chi2.ppf(0.95, 1) / 2  (cost = 0.5*sum(r^2))
+
+def _profile_grid(name, val, n_grid):
+    lo, hi = PARAM_BOUNDS[name]
+    if name == "c0":                      # bounded in (0,1): linear grid
+        lo_g, hi_g = max(lo, min(val - 0.35, 0.60)), min(hi, max(val + 0.35, 0.40))
+        g = np.linspace(lo_g, hi_g, n_grid)
+    else:                                 # positive params: log grid, 4x each way
+        lo_g, hi_g = max(lo, val / 4.0), min(hi, val * 4.0)
+        g = np.logspace(np.log10(lo_g), np.log10(hi_g), n_grid)
+    return np.unique(np.concatenate([g, [val]]))   # include the fit value exactly
+
+def _ci_from_profile(grid, delta, thr=CHI2_95_1DF):
+    below = np.where(delta <= thr)[0]
+    if len(below) == 0:
+        return dict(ci_lo=None, ci_hi=None, lo_bounded=False, hi_bounded=False)
+    lo_i, hi_i = below.min(), below.max()
+    if lo_i > 0:                                   # crossing on the left -> bounded below
+        g0, g1, d0, d1 = grid[lo_i-1], grid[lo_i], delta[lo_i-1], delta[lo_i]
+        ci_lo, lo_b = g0 + (thr - d0)*(g1 - g0)/max(d1 - d0, 1e-12), True
     else:
-        c = base["theta"].get(param, base["fixed"].get(param, 1.0))
-        grid = np.linspace(max(lo_b, 0.25 * abs(c)), min(hi_b, 4.0 * abs(c)), int(n_grid))
-    costs = []
+        ci_lo, lo_b = float(grid[0]), False        # touches grid edge -> unbounded
+    if hi_i < len(grid) - 1:
+        g0, g1, d0, d1 = grid[hi_i], grid[hi_i+1], delta[hi_i], delta[hi_i+1]
+        ci_hi, hi_b = g0 + (thr - d0)*(g1 - g0)/max(d1 - d0, 1e-12), True
+    else:
+        ci_hi, hi_b = float(grid[-1]), False
+    return dict(ci_lo=float(ci_lo), ci_hi=float(ci_hi), lo_bounded=lo_b, hi_bounded=hi_b)
+
+def fim_analysis(fit, noise_scale):
+    """FIM = J^T J / sigma^2 at the exact-solve optimum.
+    J = fit['jac'] = d(weighted residual)/d(theta); sigma = sidebar noise
+    (consistent with the weighting used by fit_exact). Columns scaled by |theta|
+    so directions are dimensionless. Returns eigen-decomposition, condition
+    number, and per-parameter relative CV% (delta method via pinv)."""
+    free = [k for k in PARAM_ORDER if k not in fit["fixed"]]
+    J = np.asarray(fit["jac"], dtype=float) / max(float(noise_scale), 1e-8)
+    sc = np.array([max(abs(fit["theta"][k]), 1e-8) for k in free])
+    F = (J.T @ J) * np.outer(sc, sc)                    # FIM in log-param space
+    w, V = np.linalg.eigh(F)
+    ord_ = np.argsort(w)[::-1]; w, V = w[ord_], V[:, ord_]
+    Finv = np.linalg.pinv(F)
+    cv = {k: 100.0*float(np.sqrt(max(Finv[i, i], 0.0))) for i, k in enumerate(free)}
+    flat = {k: float(abs(V[i, -1])) for i, k in enumerate(free)}   # smallest-eig direction
+    return dict(free=free, eigvals=w, eigvecs=V,
+                cond=float(w[0]/max(w[-1], 1e-30)), cv=cv, flat=flat)
+
+def profile_likelihood(data, fit, name, n_grid=13, rel_weight=True, max_nfev=250):
+    """Profile likelihood for one parameter. Fixes `name` at each grid value and
+    re-optimizes the remaining free parameters (warm-started from the global
+    optimum). Δcost(g) = cost(g) - min(cost over grid, fit cost)."""
+    theta, base_fixed = dict(fit["theta"]), dict(fit["fixed"])
+    grid = _profile_grid(name, theta[name], n_grid)
+    deltas = []
     for g in grid:
-        fixed = dict(base["fixed"]); fixed[param] = float(g)
+        fixed = dict(base_fixed); fixed[name] = float(g)
         fun, unpack, free = _exact_fun_unpack(data, fixed, rel_weight)
-        lo = [PARAM_BOUNDS[k][0] for k in free]; hi = [PARAM_BOUNDS[k][1] for k in free]
-        x0 = np.clip(np.array([base["theta"].get(k, base["fixed"].get(k, 1.0))
-                               for k in free]), lo, hi)
-        rng = np.random.default_rng(seed)
-        starts = [x0] + [np.clip(np.array([rng.uniform(l, h) for l, h in zip(lo, hi)]), lo, hi)
-                         for _ in range(int(n_starts) - 1)]
-        best = None
-        for s0 in starts:
-            r = least_squares(fun, s0, bounds=(lo, hi), method="trf",
-                              ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=300)
-            if best is None or r.cost < best.cost: best = r
-        costs.append(best.cost)
-    costs = np.array(costs)
-    dcost = costs - min(costs.min(), base["cost"])
-    thr   = 0.5 * CHI2_95_1DF
-    below = np.where(dcost <= thr)[0]
-    if len(below):
-        ci_lo, ci_hi = float(grid[below.min()]), float(grid[below.max()])
-        bounded = bool(below.min() > 0 and below.max() < len(grid) - 1)
-    else:
-        ci_lo = ci_hi = None; bounded = False
-    return dict(param=param, grid=grid, dcost=dcost, thr=thr,
-                ci_lo=ci_lo, ci_hi=ci_hi, bounded=bounded)
+        lo = np.array([PARAM_BOUNDS[k][0] for k in free])
+        hi = np.array([PARAM_BOUNDS[k][1] for k in free])
+        x0 = np.clip(np.array([theta[k] for k in free]), lo, hi)
+        r = least_squares(fun, x0, bounds=(lo, hi), method="trf",
+                          ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=max_nfev)
+        deltas.append(r.cost)
+    delta = np.asarray(deltas) - min(min(deltas), fit["cost"])
+    return dict(name=name, grid=grid, delta=delta, thr=CHI2_95_1DF,
+                **_ci_from_profile(grid, delta))
 
 class ConstitutiveParams(nn.Module):
     """Learnable shared scalars θ=(Ψ0,γ,E0,c0[,m]); positivity built in; m frozen by default."""
@@ -1303,28 +1335,29 @@ with tb[3]:
         if st.session_state.get("pl_run"):
             with st.spinner(f"profiling {pl_param} ({int(pl_n)} refits)…"):
                 st.session_state["pl"] = profile_likelihood(
-                    st.session_state.data, xf, param=pl_param,
-                    n_grid=int(pl_n), rel_weight=rel_weight, seed=seed)
+                    st.session_state.data, xf, name=pl_param,
+                    n_grid=int(pl_n), rel_weight=rel_weight)
         pl_res = st.session_state.get("pl")
         if pl_res is not None:
             f, a = plt.subplots(figsize=(7, 3.4), facecolor="none")
-            if pl_res["param"] == "gamma": a.set_xscale("log")
-            a.plot(pl_res["grid"], pl_res["dcost"], "o-", color=CY, lw=2)
+            a.set_xscale("log" if pl_res["name"] != "c0" else "linear")
+            a.plot(pl_res["grid"], pl_res["delta"], "o-", color=CY, lw=2)
             a.axhline(pl_res["thr"], color=RD, ls="--", label="95% threshold (χ²₁/2)")
             if pl_res["ci_lo"] is not None:
                 a.axvline(pl_res["ci_lo"], color=AM, ls=":")
                 a.axvline(pl_res["ci_hi"], color=AM, ls=":")
-            a.set_xlabel(pl_res["param"]); a.set_ylabel("Δcost")
+            a.set_xlabel(pl_res["name"]); a.set_ylabel("Δcost")
             a.legend(frameon=False, fontsize=8); ax0(a)
-            a.set_title(f"Profile likelihood — {pl_res['param']}")
+            a.set_title(f"Profile likelihood — {pl_res['name']}")
             st.pyplot(f)
-            if pl_res["bounded"]:
-                st.caption(f"95% CI for {pl_res['param']}: "
+            if pl_res["lo_bounded"] and pl_res["hi_bounded"]:
+                st.caption(f"95% CI for {pl_res['name']}: "
                            f"[{pl_res['ci_lo']:.3f}, {pl_res['ci_hi']:.3f}] — bounded (identifiable).")
             else:
-                st.caption(f"95% CI for {pl_res['param']} is UNBOUNDED within "
-                           f"[{pl_res['grid'][0]:.2f}, {pl_res['grid'][-1]:.2f}] — "
-                           "practically unidentifiable from these data.")
+                lo_s = f"{pl_res['ci_lo']:.3f}" if pl_res["lo_bounded"] else f"{pl_res['grid'][0]:.2f} (edge)"
+                hi_s = f"{pl_res['ci_hi']:.3f}" if pl_res["hi_bounded"] else f"{pl_res['grid'][-1]:.2f} (edge)"
+                st.caption(f"95% CI for {pl_res['name']} is [{lo_s}, {hi_s}] — "
+                           f"{'identifiable' if (pl_res['lo_bounded'] and pl_res['hi_bounded']) else 'practically unidentifiable from these data.'}")
         pp, pe = psi_of_c(pred_c[0], P), e_of_c(pred_c[0], P)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Ψ(τ) err", f"{rel2(pp, d2['psi_runs'][0]):.1f}%" if ctruth else "—")
