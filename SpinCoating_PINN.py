@@ -1394,6 +1394,77 @@ with tb[3]:
             st.caption("Three estimators now coexist on the same data: PINN (soft loss) above, "
                        "algebraic hybrid, and this exact solve — compare Ψ/E columns directly.")
 
+    # ── Phase 3 · identifiability certificate ─────────────────────────────
+    xf = st.session_state.get("exact_fit")
+    if xf is not None and st.session_state.data is not None:
+        st.markdown("#### Identifiability certificate · FIM + profile likelihood")
+        st.caption("FIM from the exact-solve Jacobian (directions dimensionless). "
+                   "Profiles: one parameter swept, rest re-optimized; 95% CI where "
+                   "Δcost ≤ χ²(1,95%)/2 = 1.92. Unbounded CI ⇒ practically unidentifiable.")
+        pb1, pb2 = st.columns(2)
+        if pb1.button("Compute FIM", key="b_fim"):
+            if "jac" not in xf:
+                st.warning("Stored fit has no Jacobian — re-run the exact solve first.")
+            else:
+                with st.spinner("FIM…"):
+                    st.session_state["fim"] = fim_analysis(xf, noise)
+        if pb2.button("Run profile likelihood", key="b_prof"):
+            free = [k for k in PARAM_ORDER if k not in xf["fixed"]]
+            prg, ph2 = st.progress(0.0), st.empty()
+            profs = []
+            for j, nm in enumerate(free):
+                ph2.caption(f"profile {nm} ({j+1}/{len(free)})")
+                profs.append(profile_likelihood(st.session_state.data, xf, nm))
+                prg.progress((j + 1) / len(free))
+            prg.progress(1.0); ph2.caption("profiles complete")
+            st.session_state["profiles"] = profs
+
+        fim = st.session_state.get("fim")
+        if fim is not None:
+            w, V, free = fim["eigvals"], fim["eigvecs"], fim["free"]
+            st.markdown(f"**FIM** · cond(λ) = {fim['cond']:.2e} · "
+                        "flat direction (smallest λ): " +
+                        ", ".join(f"{k} {v:.2f}" for k, v in fim["flat"].items()))
+            fc1, fc2 = st.columns(2)
+            with fc1:
+                f, a = plt.subplots(figsize=(6, 3.2), facecolor="none")
+                a.bar(range(len(w)), np.log10(np.maximum(w, 1e-12)), color=CY)
+                a.set_xticks(range(len(w))); a.set_xlabel("eigenvalue ↓")
+                a.set_ylabel("log10 λ"); ax0(a); st.pyplot(f)
+            with fc2:
+                st.dataframe(pd.DataFrame(
+                    [{"eig": i, "log10 λ": round(float(np.log10(max(w[i], 1e-12))), 1),
+                      **{free[k]: round(float(abs(V[k, i])), 2) for k in range(len(free))}}
+                     for i in range(len(free))]), use_container_width=True)
+                st.caption("Relative CV% (delta method, assumes sidebar σ): " +
+                           ", ".join(f"{k}: {v:.0f}%" for k, v in fim["cv"].items()))
+
+        profs = st.session_state.get("profiles")
+        if profs is not None:
+            f, axes = plt.subplots(1, len(profs), figsize=(3.2*len(profs), 3.2),
+                                   facecolor="none", squeeze=False)
+            rows = []
+            for j, pr in enumerate(profs):
+                a = axes[0, j]
+                a.plot(pr["grid"], pr["delta"], "o-", color=CY, lw=1.8)
+                a.axhline(pr["thr"], color=RD, ls="--", lw=1.2)
+                if pr["ci_lo"] is not None:
+                    a.axvline(pr["ci_lo"], color=AM, ls=":", lw=1)
+                    a.axvline(pr["ci_hi"], color=AM, ls=":", lw=1)
+                if pr["name"] != "c0": a.set_xscale("log")
+                a.set_xlabel(pr["name"]); a.set_ylabel("Δcost"); ax0(a)
+                bnd = pr["lo_bounded"] and pr["hi_bounded"]
+                rows.append({"param": pr["name"],
+                             "fit": round(xf["theta"][pr["name"]], 3),
+                             "95% CI": (f"[{pr['ci_lo']:.3g}, {pr['ci_hi']:.3g}]"
+                                        if pr["ci_lo"] is not None else "—"),
+                             "status": "bounded" if bnd else "UNBOUNDED"})
+            st.pyplot(f)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True)
+            st.caption("A well-identified parameter (expect e0/c0) crosses the red line on "
+                       "both sides; a flat direction (expect ψ₀/γ) never crosses → CI unbounded. "
+                       "That is the statistically certified version of the information horizon.")
+
 # ---------- 4 · MANUAL / CSV (ADDED TAB) ----------
 with tb[4]:
     st.markdown("#### Manual / CSV input")
