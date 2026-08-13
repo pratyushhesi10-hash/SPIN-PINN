@@ -1,7 +1,6 @@
 ## SpinCoat PINN Lab
 
-This is an interactive tool for exploring a research question from spin-coating physics: if you only get to measure a thin film's thickness at a few sparse, noisy points in time, can you work backward and figure out how its viscosity and evaporation rate were changing throughout the process, even though you never measured those directly? The app lets you generate synthetic data where you know the real answer and see how well the model recovers it, or upload your own real thickness measurements and see what comes out. It's built on top of a research project at NC State's ORaCEL lab studying inverse parameter recovery for organic semiconductor spin coating, and it's meant to make that project's findings tangible and explorable rather than just something you read about in a writeup.
-
+This is an interactive tool for exploring a research question from spin-coating physics: if you only get to measure a thin film's thickness at a few sparse, noisy points in time, can you work backward and figure out how its viscosity and evaporation rate were changing throughout the process, even though you never measured those directly? The app lets you generate synthetic data where you know the real answer and see how well the model recovers it, or upload your own real thickness measurements and see what comes out.
 ## The physics behind it
 
 When you spin-coat a polymer solution, two things are happening to the film at once. Centrifugal force is flinging liquid outward and thinning it, and the solvent is evaporating. Both effects are captured in a single differential equation:
@@ -76,4 +75,4 @@ Go to the website:https://spin-pinn.streamlit.app/
 
 ## Where this comes from
 
-The physics underlying this tool traces back to the classical spin-coating theory of Emslie, Bonner, and Peck (1958), and the PINN framework itself follows the approach introduced by Raissi, Perdikaris, and Karniadakis (2019). Everything specific to viscosity/evaporation recovery, the identifiability findings, and the app itself came out of ongoing undergraduate research at NC State's ORaCEL lab.
+The physics underlying this tool traces back to the classical spin-coating theory of Emslie, Bonner, and Peck (1958), and the PINN framework itself follows the approach introduced by Raissi, Perdikaris, and Karniadakis (2019). Everything specific to viscosity/evaporation recovery, the identifiability findings, and the app itself came from me.
