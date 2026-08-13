@@ -171,15 +171,6 @@ st.markdown(
 )
 
 # ─────────────────────────── Model (unchanged base) ───────────────────────────
-class ThicknessNet(nn.Module):
-    def __init__(self, h=32, L=3):
-        super().__init__()
-        L_ = [nn.Linear(1, h), nn.Tanh()]
-        for _ in range(L - 1): L_ += [nn.Linear(h, h), nn.Tanh()]
-        L_ += [nn.Linear(h, 1)]
-        self.net = nn.Sequential(*L_); self.sp = nn.Softplus()
-    def forward(self, tau, h0=1.0):
-        return h0 - tau * self.sp(self.net(tau))   # hard-enforces h(0)=h0
 
 class PsiNet(nn.Module):
     def __init__(self, h=32, L=3):
@@ -624,8 +615,14 @@ def generate_data(psi_A, psi_d, E_B, E_d, rpm_a, rpm_b, n_meas, noise, noise_cod
             meas = np.clip(h_s + rng.normal(0, noise, len(idx)) * h_s, 1e-4, None)
         else:
             meas = np.clip(h_s + rng.normal(0, noise, len(idx)), 1e-4, None)
-        runs.append(dict(rpm=rpm, w=w, h=h, c=c, tau_s=tau[idx], h_meas=meas,
-                         tau_c=np.sort(rng.uniform(0, 1, n_colloc))))
+        if dense_early:
+            n_e = max(1, int(round(early_frac * n_colloc))); n_l = n_colloc - n_e
+            tc = np.sort(np.concatenate([
+                rng.uniform(0.0, early_span, n_e),      # leverage window τ<0.2
+                rng.uniform(early_span, 1.0, n_l)]))
+        else:
+            tc = np.sort(rng.uniform(0, 1, n_colloc))
+        runs.append(dict(rpm=rpm, w=w, h=h, c=c, tau_s=tau[idx], h_meas=meas, tau_c=tc))
     out = dict(tau=tau, runs=runs, K_true=K_true, has_truth=True, coupled=bool(coupled),
                psi=psi_runs[0], e=e_runs[0], psi_runs=psi_runs, e_runs=e_runs)
     if coupled: out["params_true"] = P
@@ -760,7 +757,7 @@ def train(data, h, L, epochs, lr, w_d, w_p, seed, prog, ph, param_psi=False, mon
             
             if mono_w > 0.0:
                 pt = psi(tc); dpt = torch.autograd.grad(pt.sum(), tc, create_graph=True, retain_graph=True)[0]
-                Lmono = Lmono + torch.mean(torch.relu(dpt)) ** 2
+                Lmono = Lmono + torch.mean(torch.relu(dpt) ** 2)
         nrun = len(data["runs"])
         Ld = Ld / nrun; Lp = Lp / nrun
         if mono_w > 0.0:
@@ -1076,32 +1073,23 @@ with tb[2]:
             st.warning("No data loaded yet. Use **Generate data** (synthetic) or load CSV / manual "
                        "data in the **Manual / CSV** tab first.")
             st.stop()
-        if EXACT_MODE:
-            with st.spinner("Exact ODE solve (multi-start least squares)…"):
-                fixed = {}
-                if fix_m:     fixed["m"]     = float(m_fix)
-                if fix_gamma: fixed["gamma"] = float(gamma_fix)
-                xf = fit_exact(st.session_state.data, n_starts=int(n_starts),
-                               fixed=fixed, rel_weight=rel_weight, seed=int(seed))
-            st.session_state.exact_fit = xf
-            st.success(f"Exact solve done · cost={xf['cost']:.3e} · {xf['nfev']} rhs solves · "
-                       f"{xf['sec']:.1f}s — see Results.")
+        prog = st.progress(0); ph = st.empty()
+        if coupled:
+            st.session_state.nets, st.session_state.hist = train_coupled(
+                st.session_state.data, hid, lay, epochs, lr, w_d, w_p, lam_c, seed, prog, ph)
         else:
-            prog = st.progress(0); ph = st.empty()
             st.session_state.nets, st.session_state.hist = train(
                 st.session_state.data, hid, lay, epochs, lr, w_d, w_p, seed, prog, ph,
                 param_psi, mono_w, reweight_h3, fix_E=fix_E)
-            st.success("Training complete — check the Results tab.")
+        st.success("Training complete — check the **Results** tab.")
     if st.session_state.hist:
         h = st.session_state.hist
         f, a = plt.subplots(figsize=(8, 3.6), facecolor="none")
         a.plot(h["d"], color=CY, lw=2, label="L_data"); a.plot(h["p"], color=AM, lw=2, label="L_physics")
         a.set_yscale("log"); a.set_xlabel("epoch"); a.set_ylabel("loss (log)")
         a.legend(frameon=False); ax0(a); st.pyplot(f)
-    elif not train_btn and not EXACT_MODE:
+    elif not train_btn:
         st.info("Hit **Train PINN** in the sidebar.")
-    elif not train_btn and EXACT_MODE:
-        st.info("Hit **Fit Exact ODE** in the sidebar.")
 
 # ---------- 3 · RESULTS (base; truth-guarded, variable run count) ----------
 with tb[3]:
@@ -1583,12 +1571,19 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
         params = ([p for n in h_nets for p in n.parameters()] +
                   [p for n in c_nets for p in n.parameters()] + list(cp.parameters()))
         opt = optim.Adam(params, lr=lr); t0 = time.time()
+        # Phase A: data-only warmup to match train_coupled
+        oA = optim.Adam([p for n in h_nets for p in n.parameters()], lr=lr)
+        for _ in range(epochs // 4):
+            oA.zero_grad(); Ld = 0.0
+            for i in range(len(runs)):
+                Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i]) ** 2)
+            Ld.backward(); oA.step()
         for ep in range(epochs):
             opt.zero_grad(); Ld = Lp = 0.0
             for i, r in enumerate(runs):
-                Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i]) ** 2)
+                Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i]) ** 2) / len(runs)
                 R1, R2, *_ = residual_coupled(h_nets[i], c_nets[i], cp, TC[i], r["w"])
-                Lp = Lp + torch.mean(R1 ** 2) + lam_c * torch.mean(R2 ** 2)
+                Lp = Lp + (torch.mean(R1 ** 2) + lam_c * torch.mean(R2 ** 2)) / len(runs)
             loss = w_d * Ld + w_p * Lp; loss.backward(); opt.step()
             if prog is not None and ep % 50 == 0: prog.progress((ep + 1) / epochs)
             if ph is not None and ep % 50 == 0:
@@ -1605,7 +1600,7 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
     for ep in range(epochs):
         opt.zero_grad(); Ld = Lp = Lm = 0.0
         for i, r in enumerate(runs):
-            Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i])**2)
+            Ld = Ld + torch.mean((h_nets[i](TD[i], 1.0) - HD[i])**2) / len(runs)
             res, hc, _ = residual(h_nets[i], psi, e_net, TC[i], r["w"])
             
             # --- Physics residual with optional causal + 1/h³ weighting ---
@@ -1619,11 +1614,11 @@ def train_cfg(data, cfg, hid, lay, epochs, lr, w_d, w_p, w_m, seed, prog=None, p
                 wgt = torch.clamp(1.0/(hc.detach()**3 + 1e-4), max=100.0)
                 res_sq = res_sq * (wgt / wgt.mean())
             
-            Lp = Lp + torch.mean(res_sq)
+            Lp = Lp + torch.mean(res_sq) / len(runs)
             
             if cfg.get("mono") and not cfg.get("psipar"):     # Ψ monotone-decay penalty
                 dp = torch.autograd.grad(psi(TC[i]), TC[i], torch.ones_like(TC[i]), create_graph=True)[0]
-                Lm = Lm + torch.mean(torch.relu(dp)**2)
+                Lm = Lm + torch.mean(torch.relu(dp)**2) / len(runs)
         loss = w_d*Ld + w_p*Lp + w_m*Lm
         loss.backward(); opt.step()
         if prog is not None and ep % 50 == 0: prog.progress((ep+1)/epochs)
